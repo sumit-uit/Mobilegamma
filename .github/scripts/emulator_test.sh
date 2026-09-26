@@ -82,27 +82,37 @@ echo "Result: $result"
 echo "$result" > "$OUT/result.txt"
 check_no_crash
 
+echo "== What ML Kit saw in each photo (from the app's database)"
+adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos.db" || true
+adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos.db-wal" 2>/dev/null || true
+python3 - "$OUT/photos.db" <<'PY' | tee "$OUT/labels.txt" || true
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+for name, match, score, labels in db.execute(
+        "SELECT display_name, is_match, score, labels FROM photos ORDER BY display_name"):
+    print(f"{'MATCH' if match else '     '} {name:12} cake={score:.2f}  {labels}")
+PY
+
 echo "== Labels seen on all photos"
 tap_text "All scanned"
 sleep 3
 shot 03-all-scanned
-dump_ui | grep -oE 'text="[^"]*%[^"]*"' | sort -u | tee "$OUT/labels.txt" || true
 
 echo "== Toggle a photo (exclude/include)"
 tap_text "Matches" || true
 sleep 2
-first_label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/')
+first_label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
 if [ -n "$first_label" ]; then
   pos=$(find_text "$first_label")
   # tap the image just above its label
   set -- $pos
-  adb shell input tap "$1" "$(( $2 - 120 ))"
+  adb shell input tap "$1" "$(( $2 - 150 ))"
   sleep 2
   shot 04-after-toggle
 fi
 
 echo "== Open settings"
-tap_text "Settings"
+tap_text "Settings" || true
 sleep 2
 shot 05-settings
 
