@@ -10,8 +10,17 @@ mkdir -p "$OUT"
 shot() { adb exec-out screencap -p > "$OUT/$1.png"; echo "screenshot: $1"; }
 
 dump_ui() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+  adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1 || true
+  adb shell uiautomator dump /sdcard/ui.xml > "$OUT/uiautomator.log" 2>&1 || true
   adb shell cat /sdcard/ui.xml 2>/dev/null || true
+}
+
+dismiss_system_dialogs() {
+  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+  # "System UI isn't responding" / "App isn't responding" -> press "Wait"
+  local pos
+  pos=$(find_text "Wait" || true)
+  [ -n "$pos" ] && adb shell input tap $pos || true
 }
 
 # Prints "x y" for the centre of the first node whose text contains $1.
@@ -43,7 +52,15 @@ wait_for_text() {
   local text=$1 timeout=${2:-60} waited=0
   until [ -n "$(find_text "$text")" ]; do
     sleep 3; waited=$((waited + 3))
-    if [ "$waited" -ge "$timeout" ]; then echo "Timed out waiting for '$text'"; return 1; fi
+    if [ $((waited % 15)) -eq 0 ]; then dismiss_system_dialogs; fi
+    if [ "$waited" -ge "$timeout" ]; then
+      echo "Timed out waiting for '$text'"
+      shot "timeout-$(echo "$text" | tr ' ' '_')"
+      dump_ui > "$OUT/timeout-ui.xml"
+      echo "uiautomator said: $(cat "$OUT/uiautomator.log")"
+      echo "Visible texts:"; grep -oE ' text="[^"]+"' "$OUT/timeout-ui.xml" | head -30 || true
+      return 1
+    fi
   done
 }
 
@@ -65,6 +82,8 @@ sleep 5
 echo "MediaStore now has $(adb shell content query --uri content://media/external/images/media --projection _display_name | grep -c 'Row:') image(s)"
 
 echo "== Grant permissions and launch"
+sleep 20  # let the freshly booted system settle
+dismiss_system_dialogs
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_IMAGES
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
 adb shell am start -W -n "$PKG/.ui.MainActivity"

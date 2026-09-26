@@ -85,8 +85,8 @@ jobs:
           {
             echo "# Emulator run for ${GITHUB_SHA::7}"
             echo
-            echo '```'; cat result.txt labels.txt 2>/dev/null; echo '```'
-            for f in *.png; do echo; echo "## $f"; echo "![]($f)"; done
+            echo '```'; cat result.txt labels.txt 2>/dev/null || true; echo '```'
+            for f in *.png; do [ -e "$f" ] || continue; echo; echo "## $f"; echo "![]($f)"; done
           } > README.md
           git init -q -b emulator-screenshots
           git config user.name "github-actions[bot]"
