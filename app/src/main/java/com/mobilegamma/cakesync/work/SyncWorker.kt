@@ -42,7 +42,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
         PhotoScanner(applicationContext).scanNew()
 
-        val pending = store.pendingUploads(settings.requireApproval)
+        val pending = store.pendingUploads(settings.requireApproval, settings.excludePeople)
         if (pending.isEmpty()) return finish("Nothing new to upload", success = true, notify = false)
 
         val token = when (val auth = runCatching { DriveAuth(applicationContext).authorize() }.getOrNull()) {

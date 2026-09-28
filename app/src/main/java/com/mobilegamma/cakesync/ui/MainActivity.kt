@@ -162,12 +162,12 @@ private fun MainScreen(viewModel: MainViewModel) {
             }
             fullWidth {
                 Text(
-                    "Tap a photo to include or exclude it. ✓ = already in Drive.",
+                    "Tap a photo to include or exclude it. ✓ = already in Drive, 👤 = skipped (person in photo).",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
             items(state.photos, key = { it.mediaId }) { photo ->
-                PhotoTile(photo, onClick = { viewModel.toggle(photo) })
+                PhotoTile(photo, state.settings?.excludePeople ?: true, onClick = { viewModel.toggle(photo) })
             }
         }
     }
@@ -314,6 +314,9 @@ private fun SettingsCard(s: SettingsState, folders: List<PhotoScanner.Folder>?, 
             SwitchRow("Only upload photos I've approved", s.requireApproval) {
                 viewModel.updateSettings { requireApproval = it }
             }
+            SwitchRow("Skip photos with people (face detection)", s.excludePeople) {
+                viewModel.updateSettings { excludePeople = it }
+            }
 
             Text("Photos to scan", style = MaterialTheme.typography.titleSmall)
             Row(
@@ -357,7 +360,8 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun PhotoTile(photo: Photo, onClick: () -> Unit) {
+private fun PhotoTile(photo: Photo, excludePeople: Boolean, onClick: () -> Unit) {
+    val included = photo.included(excludePeople)
     Column(Modifier.clickable(onClick = onClick)) {
         Box {
             AsyncImage(
@@ -368,11 +372,12 @@ private fun PhotoTile(photo: Photo, onClick: () -> Unit) {
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .alpha(if (photo.included) 1f else 0.35f),
+                    .alpha(if (included) 1f else 0.35f),
             )
             val badge = when {
                 photo.uploaded -> "✓"
-                !photo.included -> "✕"
+                !included && photo.override == null && photo.hasPeople -> "👤"
+                !included -> "✕"
                 photo.override == true -> "＋"
                 else -> null
             }
@@ -389,7 +394,7 @@ private fun PhotoTile(photo: Photo, onClick: () -> Unit) {
             }
         }
         Text(
-            photo.labels.ifEmpty { "no labels" },
+            (if (photo.hasPeople) "👤 ${photo.faces} · " else "") + photo.labels.ifEmpty { "no labels" },
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

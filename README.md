@@ -14,6 +14,9 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   leave the phone to be analysed.
 - **Configurable labels:** match "Cake", or add more (e.g. `Cake, Dessert, Food`).
   Changing labels or the confidence threshold re-checks photos already scanned.
+- **Skip photos with people:** on-device face detection (ML Kit) marks cake photos that
+  contain a person with 👤 and leaves them out of uploads. You can switch this off, or tap
+  a photo to include it anyway.
 - **Review grid:** tap a photo to include or exclude it. "All scanned" lets you
   include photos the detector missed. You can also require approval before upload.
 - **Daily automatic upload:** WorkManager runs at the hour you choose, optionally only

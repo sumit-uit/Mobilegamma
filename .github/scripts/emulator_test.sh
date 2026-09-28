@@ -107,9 +107,10 @@ adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos.db-wal" 2>
 python3 - "$OUT/photos.db" <<'PY' | tee "$OUT/labels.txt" || true
 import sqlite3, sys
 db = sqlite3.connect(sys.argv[1])
-for name, match, score, labels in db.execute(
-        "SELECT display_name, is_match, score, labels FROM photos ORDER BY display_name"):
-    print(f"{'MATCH' if match else '     '} {name:12} cake={score:.2f}  {labels}")
+for name, match, score, faces, labels in db.execute(
+        "SELECT display_name, is_match, score, faces, labels FROM photos ORDER BY display_name"):
+    skip = " (skipped: people)" if match and faces else ""
+    print(f"{'MATCH' if match else '     '} {name:12} cake={score:.2f} faces={faces}{skip}  {labels}")
 PY
 
 echo "== Labels seen on all photos"

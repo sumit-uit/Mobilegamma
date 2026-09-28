@@ -6,6 +6,11 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
+import android.net.Uri
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.mobilegamma.cakesync.data.Photo
@@ -17,7 +22,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * Finds photos added since the last scan and labels them on-device with ML Kit.
+ * Finds photos not scanned yet, labels them and counts faces on-device with ML Kit.
  * Nothing leaves the phone during scanning.
  */
 class PhotoScanner(private val context: Context) {
@@ -46,55 +51,82 @@ class PhotoScanner(private val context: Context) {
             val labeler = ImageLabeling.getClient(
                 ImageLabelerOptions.Builder().setConfidenceThreshold(0.3f).build()
             )
+            // Used to skip photos with people in them (on-device, nothing is uploaded).
+            val faceDetector = FaceDetection.getClient(
+                FaceDetectorOptions.Builder()
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                    .setMinFaceSize(0.05f)
+                    .build()
+            )
+            // Photos scanned by older versions haven't been face-checked yet.
+            val backfill = store.missingFaceCheck()
+            val total = candidates.size + backfill.size
             var scanned = 0
             var matched = 0
             try {
                 candidates.forEachIndexed { index, item ->
-                    onProgress(index, candidates.size)
-                    run {
-                        val labels = labelImage(labeler, item)
-                        if (labels != null) {
-                            val score = labels.filter { it.first.lowercase() in targets }
-                                .maxOfOrNull { it.second } ?: 0f
-                            val isMatch = score >= threshold
-                            store.insert(
-                                Photo(
-                                    mediaId = item.id,
-                                    uri = item.uri,
-                                    displayName = item.name,
-                                    mimeType = item.mimeType,
-                                    takenAtMillis = item.takenAtMillis,
-                                    labels = labels.take(5).joinToString { "${it.first} ${(it.second * 100).toInt()}%" },
-                                    score = score,
-                                    isMatch = isMatch,
-                                    override = null,
-                                    uploadedAtMillis = null,
-                                )
-                            )
-                            scanned++
-                            if (isMatch) matched++
-                        }
-                    }
+                    onProgress(index, total)
+                    val result = analyze(labeler, faceDetector, item.uri) ?: return@forEachIndexed
+                    val score = result.labels.filter { it.first.lowercase() in targets }
+                        .maxOfOrNull { it.second } ?: 0f
+                    val isMatch = score >= threshold
+                    store.insert(
+                        Photo(
+                            mediaId = item.id,
+                            uri = item.uri,
+                            displayName = item.name,
+                            mimeType = item.mimeType,
+                            takenAtMillis = item.takenAtMillis,
+                            labels = result.labels.take(5).joinToString { "${it.first} ${(it.second * 100).toInt()}%" },
+                            score = score,
+                            isMatch = isMatch,
+                            override = null,
+                            uploadedAtMillis = null,
+                            faces = result.faces,
+                        )
+                    )
+                    scanned++
+                    if (isMatch) matched++
                 }
-                onProgress(candidates.size, candidates.size)
+                backfill.forEachIndexed { index, photo ->
+                    onProgress(candidates.size + index, total)
+                    val faces = countFaces(faceDetector, photo.uri) ?: return@forEachIndexed
+                    store.setFaces(photo.mediaId, faces)
+                }
+                onProgress(total, total)
             } finally {
                 labeler.close()
+                faceDetector.close()
             }
             Result(scanned, matched)
         }
 
-    private suspend fun labelImage(
-        labeler: com.google.mlkit.vision.label.ImageLabeler,
-        item: MediaItem,
-    ): List<Pair<String, Float>>? = try {
-        // A small thumbnail is plenty for labelling and far faster than the full image.
-        val bitmap = context.contentResolver.loadThumbnail(item.uri, Size(512, 512), null)
-        val labels = labeler.process(InputImage.fromBitmap(bitmap, 0)).await()
-        labels.map { it.text to it.confidence }.sortedByDescending { it.second }
+    private class Analysis(val labels: List<Pair<String, Float>>, val faces: Int?)
+
+    private suspend fun analyze(labeler: ImageLabeler, faceDetector: FaceDetector, uri: Uri): Analysis? = try {
+        val image = thumbnail(uri)
+        val labels = labeler.process(image).await()
+            .map { it.text to it.confidence }
+            .sortedByDescending { it.second }
+        val faces = runCatching { faceDetector.process(image).await().size }
+            .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
+            .getOrNull()
+        Analysis(labels, faces)
     } catch (e: Exception) {
-        Log.w(TAG, "Could not label ${item.uri}", e)
+        Log.w(TAG, "Could not analyse $uri", e)
         null
     }
+
+    private suspend fun countFaces(faceDetector: FaceDetector, uri: Uri): Int? = try {
+        faceDetector.process(thumbnail(uri)).await().size
+    } catch (e: Exception) {
+        Log.w(TAG, "Could not face-check $uri", e)
+        null
+    }
+
+    // A thumbnail is plenty for labelling and faces, and far faster than the full image.
+    private fun thumbnail(uri: Uri): InputImage =
+        InputImage.fromBitmap(context.contentResolver.loadThumbnail(uri, Size(768, 768), null), 0)
 
     private data class MediaItem(
         val id: Long,

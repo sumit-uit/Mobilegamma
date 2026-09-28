@@ -20,14 +20,20 @@ data class Photo(
     /** User decision: null = follow the classifier, true = include, false = exclude. */
     val override: Boolean?,
     val uploadedAtMillis: Long?,
+    /** Faces found by on-device face detection; null = not checked yet. */
+    val faces: Int? = null,
 ) {
-    val included: Boolean get() = override ?: isMatch
+    val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
+
+    /** Whether this photo will be uploaded; the user's choice always wins. */
+    fun included(excludePeople: Boolean): Boolean =
+        override ?: (isMatch && !(excludePeople && hasPeople))
 }
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 1) {
+    SQLiteOpenHelper(context, "photos.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -43,13 +49,16 @@ class PhotoStore private constructor(context: Context) :
                 is_match INTEGER NOT NULL,
                 override INTEGER,
                 uploaded_at INTEGER,
-                drive_file_id TEXT
+                drive_file_id TEXT,
+                faces INTEGER
             )
             """.trimIndent()
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) db.execSQL("ALTER TABLE photos ADD COLUMN faces INTEGER")
+    }
 
     fun contains(mediaId: Long): Boolean =
         readableDatabase.rawQuery("SELECT 1 FROM photos WHERE media_id = ?", arrayOf(mediaId.toString()))
@@ -70,9 +79,18 @@ class PhotoStore private constructor(context: Context) :
             put("labels", photo.labels)
             put("score", photo.score)
             put("is_match", if (photo.isMatch) 1 else 0)
+            photo.faces?.let { put("faces", it) }
         }
         writableDatabase.insertWithOnConflict("photos", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
+
+    fun setFaces(mediaId: Long, faces: Int) {
+        val values = ContentValues().apply { put("faces", faces) }
+        writableDatabase.update("photos", values, "media_id = ?", arrayOf(mediaId.toString()))
+    }
+
+    /** Photos scanned before face detection existed. */
+    fun missingFaceCheck(): List<Photo> = query("WHERE faces IS NULL")
 
     fun setOverride(mediaId: Long, include: Boolean?) {
         val values = ContentValues().apply {
@@ -126,10 +144,14 @@ class PhotoStore private constructor(context: Context) :
     /** Every scanned photo, newest first (for fixing missed detections). */
     fun all(limit: Int = 500): List<Photo> = query("ORDER BY taken_at DESC LIMIT $limit")
 
-    /** Photos waiting to be uploaded. */
-    fun pendingUploads(requireApproval: Boolean): List<Photo> {
+    /**
+     * Photos waiting to be uploaded. With [excludePeople], automatic matches must have been
+     * face-checked and contain no faces; photos the user explicitly included always go.
+     */
+    fun pendingUploads(requireApproval: Boolean, excludePeople: Boolean): List<Photo> {
+        val auto = if (excludePeople) "is_match = 1 AND faces = 0" else "is_match = 1"
         val include = if (requireApproval) "override = 1" else
-            "(override = 1 OR (override IS NULL AND is_match = 1))"
+            "(override = 1 OR (override IS NULL AND $auto))"
         return query("WHERE uploaded_at IS NULL AND $include ORDER BY taken_at ASC")
     }
 
@@ -141,6 +163,7 @@ class PhotoStore private constructor(context: Context) :
     private fun Cursor.toPhoto(): Photo {
         val overrideIdx = getColumnIndexOrThrow("override")
         val uploadedIdx = getColumnIndexOrThrow("uploaded_at")
+        val facesIdx = getColumnIndexOrThrow("faces")
         return Photo(
             mediaId = getLong(getColumnIndexOrThrow("media_id")),
             uri = Uri.parse(getString(getColumnIndexOrThrow("uri"))),
@@ -152,6 +175,7 @@ class PhotoStore private constructor(context: Context) :
             isMatch = getInt(getColumnIndexOrThrow("is_match")) == 1,
             override = if (isNull(overrideIdx)) null else getInt(overrideIdx) == 1,
             uploadedAtMillis = if (isNull(uploadedIdx)) null else getLong(uploadedIdx),
+            faces = if (isNull(facesIdx)) null else getInt(facesIdx),
         )
     }
 

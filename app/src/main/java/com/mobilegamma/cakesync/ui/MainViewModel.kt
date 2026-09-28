@@ -30,6 +30,7 @@ data class SettingsState(
     val wifiOnly: Boolean,
     val dailySyncEnabled: Boolean,
     val requireApproval: Boolean,
+    val excludePeople: Boolean,
     val scanDays: Int,
     val scanFolders: Set<String>,
 )
@@ -76,7 +77,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val showAll = _state.value.showAll
             val (photos, pending) = withContext(Dispatchers.IO) {
                 (if (showAll) store.all() else store.matches()) to
-                    store.pendingUploads(settings.requireApproval).size
+                    store.pendingUploads(settings.requireApproval, settings.excludePeople).size
             }
             _state.update {
                 it.copy(
@@ -133,7 +134,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Cycles a photo between included and excluded (an explicit user decision). */
     fun toggle(photo: Photo) {
         viewModelScope.launch(Dispatchers.IO) {
-            store.setOverride(photo.mediaId, !photo.included)
+            store.setOverride(photo.mediaId, !photo.included(settings.excludePeople))
             refresh()
         }
     }
@@ -179,7 +180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             SyncScheduler.apply(getApplication())
         }
         _state.update { it.copy(settings = after) }
-        if (before.requireApproval != after.requireApproval) refresh()
+        if (before.requireApproval != after.requireApproval || before.excludePeople != after.excludePeople) refresh()
     }
 
     private fun readSettings() = SettingsState(
@@ -190,6 +191,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         wifiOnly = settings.wifiOnly,
         dailySyncEnabled = settings.dailySyncEnabled,
         requireApproval = settings.requireApproval,
+        excludePeople = settings.excludePeople,
         scanDays = settings.scanDays,
         scanFolders = settings.scanFolders,
     )

@@ -10,8 +10,10 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else "test-images"
 SETS = {
     "cake": ["Category:Birthday cakes", "Category:Chocolate cakes", "Category:Cakes"],
     "other": ["Category:Labrador Retrievers", "Category:Beaches", "Category:Bicycles"],
+    # people with cake: should be matched as cake but skipped because of faces
+    "people": ["Category:Birthday parties", "Category:People with cakes", "Category:Selfies"],
 }
-PER_SET = 4
+PER_SET = 3
 
 
 def get(url):
