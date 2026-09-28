@@ -7,9 +7,6 @@ import android.util.Log
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
 import com.google.mlkit.vision.face.FaceDetection
@@ -155,8 +152,9 @@ class PhotoScanner(private val context: Context) {
      * Counts faces of real people. A face that is part of the cake - a printed photo
      * topper, a cartoon character or a figurine - is ignored when either:
      *  - its centre lies inside an object the detector classifies as Food, or
-     *  - the area around it (with the face itself blanked out) looks like cake: a topper
-     *    is surrounded by icing, a real person by hair, shoulders or background.
+     *  - it is surrounded by cake: patches above, below, left and right of it (far enough
+     *    out to be past a printed photo's own background) look like cake on at least three
+     *    sides. A real person next to or holding a cake has cake on one side at most.
      */
     private suspend fun peopleIn(
         bitmap: Bitmap,
@@ -175,36 +173,44 @@ class PhotoScanner(private val context: Context) {
         return faces.count { face ->
             val box = face.boundingBox
             val inFood = foodAreas.any { it.contains(box.centerX(), box.centerY()) }
-            val surroundings = if (inFood) emptyList() else surroundingLabels(bitmap, box, labeler)
-            val cakeAround = surroundings.filter { it.first.lowercase() in cakeWords }.maxOfOrNull { it.second } ?: 0f
-            val onCake = inFood || cakeAround >= 0.5f
-            Log.i(
-                TAG,
-                "face $box: inFood=$inFood around=${surroundings.take(4)} -> ${if (onCake) "on cake (ignored)" else "person"}",
-            )
+            val sides = if (inFood) emptyList() else cakeSides(bitmap, box, labeler, cakeWords)
+            val onCake = inFood || sides.count { it.second } >= 3
+            Log.i(TAG, "face $box: inFood=$inFood sides=$sides -> ${if (onCake) "on cake (ignored)" else "person"}")
             !onCake
         }
     }
 
-    /** Labels for the region around [face] (twice its size), with the face greyed out. */
-    private suspend fun surroundingLabels(bitmap: Bitmap, face: Rect, labeler: ImageLabeler): List<Pair<String, Float>> {
-        val margin = maxOf(face.width(), face.height()) / 2
-        val region = Rect(
-            maxOf(0, face.left - margin),
-            maxOf(0, face.top - margin),
-            minOf(bitmap.width, face.right + margin),
-            minOf(bitmap.height, face.bottom + margin),
-        )
-        if (region.width() < 16 || region.height() < 16) return emptyList()
-        val crop = Bitmap.createBitmap(bitmap, region.left, region.top, region.width(), region.height())
-            .copy(Bitmap.Config.ARGB_8888, true)
-        Canvas(crop).drawRect(
-            Rect(face.left - region.left, face.top - region.top, face.right - region.left, face.bottom - region.top),
-            Paint().apply { color = Color.GRAY },
-        )
-        return labeler.process(InputImage.fromBitmap(crop, 0)).await()
-            .map { it.text to it.confidence }
-            .sortedByDescending { it.second }
+    /**
+     * For each direction (up, down, left, right) labels a patch 1.5 face-sizes wide whose
+     * centre is 2.5 face-sizes from the face, and reports whether it looks like cake.
+     * Patches mostly outside the photo count as not cake.
+     */
+    private suspend fun cakeSides(
+        bitmap: Bitmap,
+        face: Rect,
+        labeler: ImageLabeler,
+        cakeWords: Set<String>,
+    ): List<Pair<String, Boolean>> {
+        val size = maxOf(face.width(), face.height())
+        val half = (size * 0.75f).toInt()
+        val dist = (size * 2.5f).toInt()
+        val cx = face.centerX()
+        val cy = face.centerY()
+        val directions = listOf("up" to (0 to -1), "down" to (0 to 1), "left" to (-1 to 0), "right" to (1 to 0))
+        return directions.map { (name, d) ->
+            val px = cx + d.first * dist
+            val py = cy + d.second * dist
+            val patch = Rect(px - half, py - half, px + half, py + half)
+            val clipped = Rect(patch)
+            val inside = clipped.intersect(0, 0, bitmap.width, bitmap.height) &&
+                clipped.width() * clipped.height() >= patch.width() * patch.height() / 2
+            val isCake = inside && run {
+                val crop = Bitmap.createBitmap(bitmap, clipped.left, clipped.top, clipped.width(), clipped.height())
+                val labels = labeler.process(InputImage.fromBitmap(crop, 0)).await()
+                labels.any { it.text.lowercase() in cakeWords && it.confidence >= 0.5f }
+            }
+            name to isCake
+        }
     }
 
     // A thumbnail is plenty for labelling and faces, and far faster than the full image.
@@ -285,6 +291,8 @@ class PhotoScanner(private val context: Context) {
         const val TAG = "PhotoScanner"
 
         /** Labels that mean "this is cake" when seen around a face. */
-        val CAKE_SURROUNDINGS = setOf("cake", "icing", "cupcake", "dessert", "baked goods", "cream", "sweetness")
+        val CAKE_SURROUNDINGS = setOf(
+            "cake", "icing", "cupcake", "dessert", "baked goods", "cream", "sweetness", "food", "cuisine",
+        )
     }
 }

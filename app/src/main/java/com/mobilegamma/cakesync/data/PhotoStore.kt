@@ -33,7 +33,7 @@ data class Photo(
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 4) {
+    SQLiteOpenHelper(context, "photos.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -59,7 +59,7 @@ class PhotoStore private constructor(context: Context) :
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) db.execSQL("ALTER TABLE photos ADD COLUMN faces INTEGER")
         // v3/v4: people and cake-topper checks improved; re-check every photo on the next scan.
-        if (oldVersion < 4) db.execSQL("UPDATE photos SET faces = NULL")
+        if (oldVersion < 5) db.execSQL("UPDATE photos SET faces = NULL")
     }
 
     fun contains(mediaId: Long): Boolean =
