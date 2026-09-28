@@ -2,7 +2,12 @@ package com.mobilegamma.cakesync.ui
 
 import android.Manifest
 import android.os.Build
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalContext
+import java.security.MessageDigest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -191,8 +196,32 @@ private fun SetupCard(
                 else LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (!state.driveConnected) {
+                // What Google matches against the Android OAuth client in Cloud Console.
+                val context = LocalContext.current
+                val identity = remember { appIdentity(context) }
+                SelectionContainer {
+                    Text(
+                        "For Google Cloud → Android OAuth client:\n$identity",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
         }
     }
+}
+
+/** Package name, version and signing-certificate SHA-1 of the installed app. */
+private fun appIdentity(context: Context): String = try {
+    val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+    val signers = info.signingInfo?.apkContentsSigners.orEmpty()
+    val sha1 = signers.firstOrNull()?.let { sig ->
+        MessageDigest.getInstance("SHA-1").digest(sig.toByteArray())
+            .joinToString(":") { "%02X".format(it) }
+    } ?: "unknown"
+    "Package: ${context.packageName}\nSHA-1: $sha1\nVersion: ${info.versionName}"
+} catch (e: Exception) {
+    "Could not read app signature: ${e.message}"
 }
 
 @Composable
