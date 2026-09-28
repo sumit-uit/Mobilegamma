@@ -135,6 +135,19 @@ tap_text "Settings" || true
 sleep 2
 shot 05-settings
 
+echo "== Folder picker"
+adb shell input swipe 540 1800 540 700 300 || true
+sleep 2
+if tap_text "Choose"; then
+  sleep 3
+  shot 05b-folder-picker
+  dump_ui | grep -oE 'text="[^"]*\([0-9]+\)"' | tee "$OUT/folders.txt" || true
+  tap_text "Cancel" || adb shell input keyevent KEYCODE_BACK
+  sleep 1
+fi
+adb shell input swipe 540 700 540 1800 300 || true
+sleep 1
+
 echo "== Connect Drive (no Google account on the emulator: expect an error message, not a crash)"
 adb shell input keyevent KEYCODE_MOVE_HOME
 tap_text "Connect" || true

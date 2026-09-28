@@ -58,7 +58,9 @@ No client ID is needed in the code: Google matches the package name and SHA-1.
 ## Using it
 1. **Allow** photo access (and notifications).
 2. **Connect** Google Drive.
-3. **Scan now.** The first scan looks back 7 days, and later scans only look at new photos.
+3. **Scan now.** Choose which folders to scan (Camera, WhatsApp Images and so on; nothing
+   ticked means all of them) and how far back to look (7 days, 30 days, 1 year or all photos)
+   in Settings. Photos already checked are never analysed again.
 4. Check the grid, then **Upload now**, or turn on **Upload automatically every day**.
 
 ## Project layout

@@ -24,6 +24,9 @@ class PhotoScanner(private val context: Context) {
 
     data class Result(val scanned: Int, val matched: Int)
 
+    /** A photo folder on the device, e.g. "DCIM/Camera/", with its image count. */
+    data class Folder(val path: String, val count: Int)
+
     private val store = PhotoStore.get(context)
     private val settings = Settings(context)
 
@@ -31,10 +34,15 @@ class PhotoScanner(private val context: Context) {
         withContext(Dispatchers.IO) {
             val targets = settings.labelSet()
             val threshold = settings.threshold
-            val since = settings.lastScannedAddedSec.takeIf { it > 0 }
-                ?: (System.currentTimeMillis() / 1000 - TimeUnit.DAYS.toSeconds(settings.firstScanDays.toLong()))
+            val days = settings.scanDays
+            val since = if (days <= 0) 0L
+                else System.currentTimeMillis() / 1000 - TimeUnit.DAYS.toSeconds(days.toLong())
 
-            val candidates = queryImagesAddedAfter(since)
+            // Everything in the chosen folders and time window that hasn't been labelled yet.
+            // Checking against known ids (not a "last scanned" marker) means newly added
+            // folders or a longer window also pick up older photos.
+            val known = store.knownIds()
+            val candidates = queryImages(since, settings.scanFolders).filter { it.id !in known }
             val labeler = ImageLabeling.getClient(
                 ImageLabelerOptions.Builder().setConfidenceThreshold(0.3f).build()
             )
@@ -43,7 +51,7 @@ class PhotoScanner(private val context: Context) {
             try {
                 candidates.forEachIndexed { index, item ->
                     onProgress(index, candidates.size)
-                    if (!store.contains(item.id)) {
+                    run {
                         val labels = labelImage(labeler, item)
                         if (labels != null) {
                             val score = labels.filter { it.first.lowercase() in targets }
@@ -67,7 +75,6 @@ class PhotoScanner(private val context: Context) {
                             if (isMatch) matched++
                         }
                     }
-                    settings.lastScannedAddedSec = maxOf(settings.lastScannedAddedSec, item.addedSec)
                 }
                 onProgress(candidates.size, candidates.size)
             } finally {
@@ -98,7 +105,24 @@ class PhotoScanner(private val context: Context) {
         val addedSec: Long,
     )
 
-    private fun queryImagesAddedAfter(sinceSec: Long): List<MediaItem> {
+    /** All folders that contain photos, largest first. */
+    suspend fun listFolders(): List<Folder> = withContext(Dispatchers.IO) {
+        val counts = mutableMapOf<String, Int>()
+        context.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media.RELATIVE_PATH),
+            null, null, null,
+        )?.use { c ->
+            val col = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
+            while (c.moveToNext()) {
+                val path = c.getString(col) ?: continue
+                counts[path] = (counts[path] ?: 0) + 1
+            }
+        }
+        counts.map { Folder(it.key, it.value) }.sortedByDescending { it.count }
+    }
+
+    private fun queryImages(sinceSec: Long, folders: Set<String>): List<MediaItem> {
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
@@ -108,11 +132,17 @@ class PhotoScanner(private val context: Context) {
             MediaStore.Images.Media.DATE_ADDED,
         )
         val items = mutableListOf<MediaItem>()
+        var selection = "${MediaStore.Images.Media.DATE_ADDED} > ?"
+        val args = mutableListOf(sinceSec.toString())
+        if (folders.isNotEmpty()) {
+            selection += " AND ${MediaStore.Images.Media.RELATIVE_PATH} IN (${folders.joinToString { "?" }})"
+            args += folders
+        }
         context.contentResolver.query(
             collection,
             projection,
-            "${MediaStore.Images.Media.DATE_ADDED} > ?",
-            arrayOf(sinceSec.toString()),
+            selection,
+            args.toTypedArray(),
             "${MediaStore.Images.Media.DATE_ADDED} ASC",
         )?.use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)

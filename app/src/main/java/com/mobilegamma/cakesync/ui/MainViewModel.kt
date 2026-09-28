@@ -30,6 +30,8 @@ data class SettingsState(
     val wifiOnly: Boolean,
     val dailySyncEnabled: Boolean,
     val requireApproval: Boolean,
+    val scanDays: Int,
+    val scanFolders: Set<String>,
 )
 
 data class UiState(
@@ -43,6 +45,8 @@ data class UiState(
     val message: String? = null,
     val consentIntent: PendingIntent? = null,
     val settings: SettingsState? = null,
+    /** Photo folders on the device, loaded when the folder picker opens. */
+    val folders: List<PhotoScanner.Folder>? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -114,6 +118,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun loadFolders() {
+        viewModelScope.launch {
+            val folders = runCatching { PhotoScanner(getApplication()).listFolders() }.getOrDefault(emptyList())
+            _state.update { it.copy(folders = folders) }
+        }
+    }
+
     fun syncNow() {
         _state.update { it.copy(message = "Uploading in the background…") }
         SyncScheduler.syncNow(getApplication())
@@ -179,5 +190,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         wifiOnly = settings.wifiOnly,
         dailySyncEnabled = settings.dailySyncEnabled,
         requireApproval = settings.requireApproval,
+        scanDays = settings.scanDays,
+        scanFolders = settings.scanFolders,
     )
 }

@@ -43,15 +43,17 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_APPROVAL, false)
         set(value) = prefs.edit { putBoolean(KEY_APPROVAL, value) }
 
-    /** How far back the very first scan looks, in days. */
-    var firstScanDays: Int
-        get() = prefs.getInt(KEY_FIRST_DAYS, 7)
-        set(value) = prefs.edit { putInt(KEY_FIRST_DAYS, value) }
+    /** How far back scans look, in days; 0 = all photos. */
+    var scanDays: Int
+        get() = prefs.getInt(KEY_SCAN_DAYS, 7)
+        set(value) = prefs.edit { putInt(KEY_SCAN_DAYS, value) }
 
-    /** MediaStore DATE_ADDED (seconds) of the newest photo already scanned. */
-    var lastScannedAddedSec: Long
-        get() = prefs.getLong(KEY_LAST_SCAN, 0L)
-        set(value) = prefs.edit { putLong(KEY_LAST_SCAN, value) }
+    /**
+     * MediaStore RELATIVE_PATHs to scan, e.g. "DCIM/Camera/". Empty = every folder.
+     */
+    var scanFolders: Set<String>
+        get() = prefs.getStringSet(KEY_FOLDERS, emptySet())?.toSet() ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_FOLDERS, value) }
 
     var driveRootFolderId: String?
         get() = prefs.getString(KEY_ROOT_FOLDER_ID, null)
@@ -76,8 +78,8 @@ class Settings(context: Context) {
         const val KEY_WIFI = "wifi_only"
         const val KEY_DAILY = "daily_sync"
         const val KEY_APPROVAL = "require_approval"
-        const val KEY_FIRST_DAYS = "first_scan_days"
-        const val KEY_LAST_SCAN = "last_scanned_added_sec"
+        const val KEY_SCAN_DAYS = "scan_days"
+        const val KEY_FOLDERS = "scan_folders"
         const val KEY_ROOT_FOLDER_ID = "drive_root_folder_id"
         const val KEY_CONNECTED = "drive_connected"
         const val KEY_LAST_MSG = "last_sync_message"

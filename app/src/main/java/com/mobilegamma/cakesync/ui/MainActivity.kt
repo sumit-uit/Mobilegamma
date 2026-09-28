@@ -8,6 +8,14 @@ import android.os.Bundle
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import java.security.MessageDigest
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import com.mobilegamma.cakesync.scan.PhotoScanner
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -136,7 +144,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                     onSync = viewModel::syncNow,
                 )
             }
-            state.settings?.let { s -> fullWidth { SettingsCard(s, viewModel) } }
+            state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, viewModel) } }
             fullWidth {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                     FilterChip(
@@ -233,7 +241,7 @@ private fun StatusRow(label: String, ok: Boolean, action: String, onAction: () -
 }
 
 @Composable
-private fun SettingsCard(s: SettingsState, viewModel: MainViewModel) {
+private fun SettingsCard(s: SettingsState, folders: List<PhotoScanner.Folder>?, viewModel: MainViewModel) {
     var expanded by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -246,7 +254,8 @@ private fun SettingsCard(s: SettingsState, viewModel: MainViewModel) {
             }
             if (!expanded) {
                 Text(
-                    "Looking for: ${s.targetLabels} · Drive folder: ${s.driveFolderName} · " +
+                    "Looking for: ${s.targetLabels} · Scanning: ${folderSummary(s.scanFolders)}, " +
+                        "${scanWindowLabel(s.scanDays)} · Drive folder: ${s.driveFolderName} · " +
                         if (s.dailySyncEnabled) "daily at %02d:00".format(s.uploadHour) else "daily upload off",
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -305,6 +314,36 @@ private fun SettingsCard(s: SettingsState, viewModel: MainViewModel) {
             SwitchRow("Only upload photos I've approved", s.requireApproval) {
                 viewModel.updateSettings { requireApproval = it }
             }
+
+            Text("Photos to scan", style = MaterialTheme.typography.titleSmall)
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SCAN_WINDOWS.forEach { days ->
+                    FilterChip(
+                        selected = s.scanDays == days,
+                        onClick = { viewModel.updateSettings { scanDays = days } },
+                        label = { Text(scanWindowLabel(days)) },
+                    )
+                }
+            }
+            var showPicker by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Folders: ${folderSummary(s.scanFolders)}", Modifier.weight(1f))
+                TextButton(onClick = { showPicker = true; viewModel.loadFolders() }) { Text("Choose") }
+            }
+            if (showPicker) {
+                FolderPickerDialog(
+                    folders = folders,
+                    selected = s.scanFolders,
+                    onDismiss = { showPicker = false },
+                    onSave = { chosen ->
+                        viewModel.updateSettings { scanFolders = chosen }
+                        showPicker = false
+                    },
+                )
+            }
         }
     }
 }
@@ -356,4 +395,78 @@ private fun PhotoTile(photo: Photo, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+private val SCAN_WINDOWS = listOf(7, 30, 365, 0)
+
+private fun scanWindowLabel(days: Int) = when (days) {
+    0 -> "All photos"
+    365 -> "Last year"
+    else -> "Last $days days"
+}
+
+private fun folderSummary(folders: Set<String>) = when {
+    folders.isEmpty() -> "all folders"
+    folders.size <= 2 -> folders.joinToString { folderName(it) }
+    else -> "${folders.size} folders"
+}
+
+/** "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/" -> "WhatsApp Images" */
+private fun folderName(path: String) = path.trimEnd('/').substringAfterLast('/').ifEmpty { path }
+
+@Composable
+private fun FolderPickerDialog(
+    folders: List<PhotoScanner.Folder>?,
+    selected: Set<String>,
+    onDismiss: () -> Unit,
+    onSave: (Set<String>) -> Unit,
+) {
+    var chosen by remember { mutableStateOf(selected) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Folders to scan") },
+        text = {
+            Column {
+                Text(
+                    "Nothing ticked = scan every folder.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (folders == null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                } else if (folders.isEmpty()) {
+                    Text("No photo folders found.", Modifier.padding(top = 8.dp))
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 400.dp).padding(top = 8.dp)) {
+                        items(folders, key = { it.path }) { folder ->
+                            val checked = folder.path in chosen
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { chosen = if (checked) chosen - folder.path else chosen + folder.path },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null)
+                                Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                                    Text("${folderName(folder.path)} (${folder.count})")
+                                    Text(
+                                        folder.path,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(chosen) }) { Text("Save") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { chosen = emptySet() }) { Text("Clear") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
 }

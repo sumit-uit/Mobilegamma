@@ -55,6 +55,11 @@ class PhotoStore private constructor(context: Context) :
         readableDatabase.rawQuery("SELECT 1 FROM photos WHERE media_id = ?", arrayOf(mediaId.toString()))
             .use { it.moveToFirst() }
 
+    fun knownIds(): Set<Long> =
+        readableDatabase.rawQuery("SELECT media_id FROM photos", null).use { c ->
+            buildSet { while (c.moveToNext()) add(c.getLong(0)) }
+        }
+
     fun insert(photo: Photo) {
         val values = ContentValues().apply {
             put("media_id", photo.mediaId)
