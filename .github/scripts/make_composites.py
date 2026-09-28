@@ -1,58 +1,49 @@
-"""Builds two controlled test photos from the downloaded ones:
+"""Builds two controlled test photos from fixed Wikimedia Commons images:
 
-  zz_cake_with_person.jpg  a cake with real people beside it -> must be skipped (faces > 0)
-  zz_cake_face_topper.jpg  a cake with a face printed on top  -> must NOT be skipped (faces == 0)
+  zz_cake_with_person.jpg  a cake with a person beside it -> must be skipped (faces > 0)
+  zz_cake_face_topper.jpg  a cake with a face printed on top -> must NOT be skipped (faces == 0)
+
+If a download fails the photos are simply not created and the checks report SKIP.
 """
-import glob
+import io
 import os
 import sys
+import urllib.parse
+import urllib.request
 
-import cv2
 from PIL import Image
 
+UA = "CakeSyncCI/0.1 (https://github.com/sumit-uit/mobilegamma)"
 folder = sys.argv[1] if len(sys.argv) > 1 else "test-images"
-cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+CAKE = "-Cake_-birthday_celebration_-Friends_-Fun_-memoryful_moment_-Delicious.jpg"  # white birthday cake
+FACE = "Albert_Einstein_Head.jpg"  # public-domain frontal portrait
 
 
-def best_cake():
-    cakes = sorted(glob.glob(os.path.join(folder, "cake_*.jpg")))
-    if not cakes:
-        sys.exit("no cake images")
-    # the largest file tends to be the most detailed, clearest cake shot
-    return Image.open(max(cakes, key=os.path.getsize)).convert("RGB")
+def fetch(title, width):
+    url = "https://commons.wikimedia.org/wiki/Special:FilePath/" + urllib.parse.quote(title) + f"?width={width}"
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=60) as res:
+        return Image.open(io.BytesIO(res.read())).convert("RGB")
 
 
-def best_face():
-    """(people image, largest face box) from the people photos, found with OpenCV."""
-    best = None
-    for path in sorted(glob.glob(os.path.join(folder, "people_*.jpg"))):
-        gray = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2GRAY)
-        for (x, y, w, h) in cascade.detectMultiScale(gray, 1.1, 5, minSize=(40, 40)):
-            if best is None or w * h > best[1][2] * best[1][3]:
-                best = (path, (x, y, w, h))
-    if best is None:
-        sys.exit("no face found in people images")
-    return Image.open(best[0]).convert("RGB"), best[1]
+try:
+    cake = fetch(CAKE, 960)
+    face = fetch(FACE, 480)
+except Exception as e:  # network or file problem: skip the controlled checks
+    print(f"warning: could not build composite test photos: {e}")
+    sys.exit(0)
 
-
-cake = best_cake()
-people, (fx, fy, fw, fh) = best_face()
-
-# 1) cake on the left, a person (face + shoulders) on the right, same height
-pad = int(fw * 0.8)
-person = people.crop((max(0, fx - pad), max(0, fy - pad), min(people.width, fx + fw + pad),
-                      min(people.height, fy + fh + pad * 3)))
-person = person.resize((int(person.width * cake.height / person.height), cake.height))
+# 1) the cake on the left, the person on the right at the same height
+person = face.resize((int(face.width * cake.height / face.height), cake.height))
 combo = Image.new("RGB", (cake.width + person.width, cake.height), "white")
 combo.paste(cake, (0, 0))
 combo.paste(person, (cake.width, 0))
 combo.save(os.path.join(folder, "zz_cake_with_person.jpg"), quality=92)
 
-# 2) the same face as a small printed photo in the middle of the cake
-face = people.crop((fx - fw // 4, fy - fh // 4, fx + fw + fw // 4, fy + fh + fh // 4))
-size = int(min(cake.width, cake.height) * 0.28)
-face = face.resize((size, size))
+# 2) the face as a small printed photo in the middle of the cake
+size = int(min(cake.width, cake.height) * 0.3)
+small = face.resize((size, int(size * face.height / face.width)))
 topper = cake.copy()
-topper.paste(face, ((cake.width - size) // 2, (cake.height - size) // 2))
+topper.paste(small, ((cake.width - small.width) // 2, (cake.height - small.height) // 2))
 topper.save(os.path.join(folder, "zz_cake_face_topper.jpg"), quality=92)
 print("built zz_cake_with_person.jpg and zz_cake_face_topper.jpg")

@@ -94,7 +94,7 @@ jobs:
       - name: Download test photos
         run: |
           python3 .github/scripts/fetch_test_images.py test-images
-          pip install --quiet opencv-python-headless pillow
+          pip install --quiet pillow
           python3 .github/scripts/make_composites.py test-images
 
       - name: Enable KVM
