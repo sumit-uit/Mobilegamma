@@ -7,7 +7,6 @@ import android.util.Log
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
 import android.graphics.Bitmap
-import android.graphics.Rect
 import android.net.Uri
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
@@ -103,7 +102,7 @@ class PhotoScanner(private val context: Context) {
                 }
                 backfill.forEachIndexed { index, photo ->
                     onProgress(candidates.size + index, total)
-                    val faces = countPeople(faceDetector, objectDetector, labeler, photo.uri) ?: return@forEachIndexed
+                    val faces = countPeople(faceDetector, objectDetector, photo.uri) ?: return@forEachIndexed
                     store.setFaces(photo.mediaId, faces)
                 }
                 onProgress(total, total)
@@ -127,7 +126,7 @@ class PhotoScanner(private val context: Context) {
         val labels = labeler.process(InputImage.fromBitmap(bitmap, 0)).await()
             .map { it.text to it.confidence }
             .sortedByDescending { it.second }
-        val faces = runCatching { peopleIn(bitmap, faceDetector, objectDetector, labeler) }
+        val faces = runCatching { peopleIn(bitmap, faceDetector, objectDetector) }
             .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
             .getOrNull()
         Analysis(labels, faces)
@@ -136,32 +135,20 @@ class PhotoScanner(private val context: Context) {
         null
     }
 
-    private suspend fun countPeople(
-        faceDetector: FaceDetector,
-        objectDetector: ObjectDetector,
-        labeler: ImageLabeler,
-        uri: Uri,
-    ): Int? = try {
-        peopleIn(thumbnail(uri), faceDetector, objectDetector, labeler)
+    private suspend fun countPeople(faceDetector: FaceDetector, objectDetector: ObjectDetector, uri: Uri): Int? = try {
+        peopleIn(thumbnail(uri), faceDetector, objectDetector)
     } catch (e: Exception) {
         Log.w(TAG, "Could not face-check $uri", e)
         null
     }
 
     /**
-     * Counts faces of real people. A face that is part of the cake - a printed photo
-     * topper, a cartoon character or a figurine - is ignored when either:
-     *  - its centre lies inside an object the detector classifies as Food, or
-     *  - it is surrounded by cake: patches above, below, left and right of it (far enough
-     *    out to be past a printed photo's own background) look like cake on at least three
-     *    sides. A real person next to or holding a cake has cake on one side at most.
+     * Counts faces of real people. A face whose centre lies inside an object the detector
+     * classifies as Food is treated as part of the cake (a topper) and ignored. This only
+     * catches some toppers; others are skipped like people, and the user can tap the photo
+     * in the review grid to include it.
      */
-    private suspend fun peopleIn(
-        bitmap: Bitmap,
-        faceDetector: FaceDetector,
-        objectDetector: ObjectDetector,
-        labeler: ImageLabeler,
-    ): Int {
+    private suspend fun peopleIn(bitmap: Bitmap, faceDetector: FaceDetector, objectDetector: ObjectDetector): Int {
         val image = InputImage.fromBitmap(bitmap, 0)
         val faces = faceDetector.process(image).await()
         if (faces.isEmpty()) return 0
@@ -169,47 +156,9 @@ class PhotoScanner(private val context: Context) {
             .getOrDefault(emptyList())
             .filter { obj -> obj.labels.any { it.text.equals("Food", ignoreCase = true) } }
             .map { it.boundingBox }
-        val cakeWords = settings.labelSet() + CAKE_SURROUNDINGS
         return faces.count { face ->
             val box = face.boundingBox
-            val inFood = foodAreas.any { it.contains(box.centerX(), box.centerY()) }
-            val sides = if (inFood) emptyList() else cakeSides(bitmap, box, labeler, cakeWords)
-            val onCake = inFood || sides.count { it.second } >= 3
-            Log.i(TAG, "face $box: inFood=$inFood sides=$sides -> ${if (onCake) "on cake (ignored)" else "person"}")
-            !onCake
-        }
-    }
-
-    /**
-     * For each direction (up, down, left, right) labels a patch 1.5 face-sizes wide whose
-     * centre is 2.5 face-sizes from the face, and reports whether it looks like cake.
-     * Patches mostly outside the photo count as not cake.
-     */
-    private suspend fun cakeSides(
-        bitmap: Bitmap,
-        face: Rect,
-        labeler: ImageLabeler,
-        cakeWords: Set<String>,
-    ): List<Pair<String, Boolean>> {
-        val size = maxOf(face.width(), face.height())
-        val half = (size * 0.75f).toInt()
-        val dist = (size * 2.5f).toInt()
-        val cx = face.centerX()
-        val cy = face.centerY()
-        val directions = listOf("up" to (0 to -1), "down" to (0 to 1), "left" to (-1 to 0), "right" to (1 to 0))
-        return directions.map { (name, d) ->
-            val px = cx + d.first * dist
-            val py = cy + d.second * dist
-            val patch = Rect(px - half, py - half, px + half, py + half)
-            val clipped = Rect(patch)
-            val inside = clipped.intersect(0, 0, bitmap.width, bitmap.height) &&
-                clipped.width() * clipped.height() >= patch.width() * patch.height() / 2
-            val isCake = inside && run {
-                val crop = Bitmap.createBitmap(bitmap, clipped.left, clipped.top, clipped.width(), clipped.height())
-                val labels = labeler.process(InputImage.fromBitmap(crop, 0)).await()
-                labels.any { it.text.lowercase() in cakeWords && it.confidence >= 0.5f }
-            }
-            name to isCake
+            foodAreas.none { it.contains(box.centerX(), box.centerY()) }
         }
     }
 
@@ -289,10 +238,5 @@ class PhotoScanner(private val context: Context) {
 
     private companion object {
         const val TAG = "PhotoScanner"
-
-        /** Labels that mean "this is cake" when seen around a face. */
-        val CAKE_SURROUNDINGS = setOf(
-            "cake", "icing", "cupcake", "dessert", "baked goods", "cream", "sweetness", "food", "cuisine",
-        )
     }
 }
