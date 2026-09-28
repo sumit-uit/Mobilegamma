@@ -116,7 +116,26 @@ private fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("CakeSync") }) }) { padding ->
+    val context = LocalContext.current
+    val version = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+    }
+    Scaffold(
+        topBar = {
+            TopAppBar(title = {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text("CakeSync")
+                    version?.let {
+                        Text(
+                            "  v$it",
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(bottom = 3.dp),
+                        )
+                    }
+                }
+            })
+        },
+    ) { padding ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 110.dp),
             modifier = Modifier.fillMaxSize().padding(padding),

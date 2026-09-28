@@ -57,7 +57,7 @@ class PhotoScanner(private val context: Context) {
             // Used to skip photos with people in them (on-device, nothing is uploaded).
             val faceDetector = FaceDetection.getClient(
                 FaceDetectorOptions.Builder()
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                     .setMinFaceSize(0.05f)
                     .build()
             )
@@ -152,9 +152,9 @@ class PhotoScanner(private val context: Context) {
     /**
      * Counts faces of real people. A face whose centre lies inside a detected food object
      * (the cake) is treated as part of the cake - a printed photo topper, a cartoon
-     * character or a figurine - and ignored. In a photo already recognised as cake, an
-     * unclassified detected object is also taken to be the cake, since the detector often
-     * leaves close-up cakes without a category.
+     * character or a figurine - and ignored. Only boxes the detector classifies as Food
+     * count: people are detected as unclassified objects, so treating those as cake would
+     * hide real people.
      */
     private suspend fun peopleIn(
         image: InputImage,
@@ -166,9 +166,7 @@ class PhotoScanner(private val context: Context) {
         if (faces.isEmpty()) return 0
         val cakeAreas = runCatching { objectDetector.process(image).await() }
             .getOrDefault(emptyList())
-            .filter { obj ->
-                obj.labels.any { it.text.equals("Food", ignoreCase = true) } || (isCake && obj.labels.isEmpty())
-            }
+            .filter { obj -> obj.labels.any { it.text.equals("Food", ignoreCase = true) } }
             .map { it.boundingBox }
         val people = faces.count { face ->
             val cx = face.boundingBox.exactCenterX().toInt()
