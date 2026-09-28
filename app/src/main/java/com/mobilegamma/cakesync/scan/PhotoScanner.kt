@@ -11,6 +11,9 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.google.mlkit.vision.label.ImageLabeler
+import com.google.mlkit.vision.objects.ObjectDetection
+import com.google.mlkit.vision.objects.ObjectDetector
+import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.mobilegamma.cakesync.data.Photo
@@ -58,6 +61,14 @@ class PhotoScanner(private val context: Context) {
                     .setMinFaceSize(0.05f)
                     .build()
             )
+            // Finds where food (the cake) is, so faces printed on toppers can be ignored.
+            val objectDetector = ObjectDetection.getClient(
+                ObjectDetectorOptions.Builder()
+                    .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+                    .enableMultipleObjects()
+                    .enableClassification()
+                    .build()
+            )
             // Photos scanned by older versions haven't been face-checked yet.
             val backfill = store.missingFaceCheck()
             val total = candidates.size + backfill.size
@@ -66,7 +77,9 @@ class PhotoScanner(private val context: Context) {
             try {
                 candidates.forEachIndexed { index, item ->
                     onProgress(index, total)
-                    val result = analyze(labeler, faceDetector, item.uri) ?: return@forEachIndexed
+                    val result = analyze(labeler, faceDetector, objectDetector, item.uri) { labels ->
+                        (labels.filter { it.first.lowercase() in targets }.maxOfOrNull { it.second } ?: 0f) >= threshold
+                    } ?: return@forEachIndexed
                     val score = result.labels.filter { it.first.lowercase() in targets }
                         .maxOfOrNull { it.second } ?: 0f
                     val isMatch = score >= threshold
@@ -90,25 +103,32 @@ class PhotoScanner(private val context: Context) {
                 }
                 backfill.forEachIndexed { index, photo ->
                     onProgress(candidates.size + index, total)
-                    val faces = countFaces(faceDetector, photo.uri) ?: return@forEachIndexed
+                    val faces = countPeople(faceDetector, objectDetector, photo.uri, photo.isMatch) ?: return@forEachIndexed
                     store.setFaces(photo.mediaId, faces)
                 }
                 onProgress(total, total)
             } finally {
                 labeler.close()
                 faceDetector.close()
+                objectDetector.close()
             }
             Result(scanned, matched)
         }
 
     private class Analysis(val labels: List<Pair<String, Float>>, val faces: Int?)
 
-    private suspend fun analyze(labeler: ImageLabeler, faceDetector: FaceDetector, uri: Uri): Analysis? = try {
+    private suspend fun analyze(
+        labeler: ImageLabeler,
+        faceDetector: FaceDetector,
+        objectDetector: ObjectDetector,
+        uri: Uri,
+        isCake: (List<Pair<String, Float>>) -> Boolean,
+    ): Analysis? = try {
         val image = thumbnail(uri)
         val labels = labeler.process(image).await()
             .map { it.text to it.confidence }
             .sortedByDescending { it.second }
-        val faces = runCatching { faceDetector.process(image).await().size }
+        val faces = runCatching { peopleIn(image, faceDetector, objectDetector, isCake(labels)) }
             .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
             .getOrNull()
         Analysis(labels, faces)
@@ -117,11 +137,46 @@ class PhotoScanner(private val context: Context) {
         null
     }
 
-    private suspend fun countFaces(faceDetector: FaceDetector, uri: Uri): Int? = try {
-        faceDetector.process(thumbnail(uri)).await().size
+    private suspend fun countPeople(
+        faceDetector: FaceDetector,
+        objectDetector: ObjectDetector,
+        uri: Uri,
+        isCake: Boolean,
+    ): Int? = try {
+        peopleIn(thumbnail(uri), faceDetector, objectDetector, isCake)
     } catch (e: Exception) {
         Log.w(TAG, "Could not face-check $uri", e)
         null
+    }
+
+    /**
+     * Counts faces of real people. A face whose centre lies inside a detected food object
+     * (the cake) is treated as part of the cake - a printed photo topper, a cartoon
+     * character or a figurine - and ignored. In a photo already recognised as cake, an
+     * unclassified detected object is also taken to be the cake, since the detector often
+     * leaves close-up cakes without a category.
+     */
+    private suspend fun peopleIn(
+        image: InputImage,
+        faceDetector: FaceDetector,
+        objectDetector: ObjectDetector,
+        isCake: Boolean,
+    ): Int {
+        val faces = faceDetector.process(image).await()
+        if (faces.isEmpty()) return 0
+        val cakeAreas = runCatching { objectDetector.process(image).await() }
+            .getOrDefault(emptyList())
+            .filter { obj ->
+                obj.labels.any { it.text.equals("Food", ignoreCase = true) } || (isCake && obj.labels.isEmpty())
+            }
+            .map { it.boundingBox }
+        val people = faces.count { face ->
+            val cx = face.boundingBox.exactCenterX().toInt()
+            val cy = face.boundingBox.exactCenterY().toInt()
+            cakeAreas.none { it.contains(cx, cy) }
+        }
+        if (people < faces.size) Log.i(TAG, "Ignored ${faces.size - people} face(s) on the cake")
+        return people
     }
 
     // A thumbnail is plenty for labelling and faces, and far faster than the full image.

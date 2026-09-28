@@ -15,7 +15,9 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
 - **Configurable labels:** match "Cake", or add more (e.g. `Cake, Dessert, Food`).
   Changing labels or the confidence threshold re-checks photos already scanned.
 - **Skip photos with people:** on-device face detection (ML Kit) marks cake photos that
-  contain a person with 👤 and leaves them out of uploads. You can switch this off, or tap
+  contain a person with 👤 and leaves them out of uploads. Faces that are part of the cake
+  (printed photo toppers, cartoon characters, figurines), meaning inside the area ML Kit
+  object detection marks as food, are ignored. You can switch this off, or tap
   a photo to include it anyway.
 - **Review grid:** tap a photo to include or exclude it. "All scanned" lets you
   include photos the detector missed. You can also require approval before upload.

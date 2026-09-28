@@ -12,6 +12,9 @@ SETS = {
     "other": ["Category:Labrador Retrievers", "Category:Beaches", "Category:Bicycles"],
     # people with cake: should be matched as cake but skipped because of faces
     "people": ["Category:Birthday parties", "Category:People with cakes", "Category:Selfies"],
+    # cakes decorated with photos/characters: faces here are on the cake and must NOT cause a skip
+    "topper": ["Category:Photo cakes", "Category:Character cakes", "Category:Novelty cakes",
+               "Category:Cake toppers"],
 }
 PER_SET = 3
 
