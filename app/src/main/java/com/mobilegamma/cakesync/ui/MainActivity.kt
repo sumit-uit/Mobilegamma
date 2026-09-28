@@ -137,7 +137,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                     FilterChip(
                         selected = !state.showAll,
                         onClick = { viewModel.setShowAll(false) },
-                        label = { Text("Matches (${if (state.showAll) "…" else state.photos.size})") },
+                        label = { Text(if (state.showAll) "Matches" else "Matches (${state.photos.size})") },
                     )
                     Spacer(Modifier.width(8.dp))
                     FilterChip(
