@@ -6,6 +6,11 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
@@ -77,9 +82,7 @@ class PhotoScanner(private val context: Context) {
             try {
                 candidates.forEachIndexed { index, item ->
                     onProgress(index, total)
-                    val result = analyze(labeler, faceDetector, objectDetector, item.uri) { labels ->
-                        (labels.filter { it.first.lowercase() in targets }.maxOfOrNull { it.second } ?: 0f) >= threshold
-                    } ?: return@forEachIndexed
+                    val result = analyze(labeler, faceDetector, objectDetector, item.uri) ?: return@forEachIndexed
                     val score = result.labels.filter { it.first.lowercase() in targets }
                         .maxOfOrNull { it.second } ?: 0f
                     val isMatch = score >= threshold
@@ -103,7 +106,7 @@ class PhotoScanner(private val context: Context) {
                 }
                 backfill.forEachIndexed { index, photo ->
                     onProgress(candidates.size + index, total)
-                    val faces = countPeople(faceDetector, objectDetector, photo.uri, photo.isMatch) ?: return@forEachIndexed
+                    val faces = countPeople(faceDetector, objectDetector, labeler, photo.uri) ?: return@forEachIndexed
                     store.setFaces(photo.mediaId, faces)
                 }
                 onProgress(total, total)
@@ -122,13 +125,12 @@ class PhotoScanner(private val context: Context) {
         faceDetector: FaceDetector,
         objectDetector: ObjectDetector,
         uri: Uri,
-        isCake: (List<Pair<String, Float>>) -> Boolean,
     ): Analysis? = try {
-        val image = thumbnail(uri)
-        val labels = labeler.process(image).await()
+        val bitmap = thumbnail(uri)
+        val labels = labeler.process(InputImage.fromBitmap(bitmap, 0)).await()
             .map { it.text to it.confidence }
             .sortedByDescending { it.second }
-        val faces = runCatching { peopleIn(image, faceDetector, objectDetector, isCake(labels)) }
+        val faces = runCatching { peopleIn(bitmap, faceDetector, objectDetector, labeler) }
             .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
             .getOrNull()
         Analysis(labels, faces)
@@ -140,46 +142,74 @@ class PhotoScanner(private val context: Context) {
     private suspend fun countPeople(
         faceDetector: FaceDetector,
         objectDetector: ObjectDetector,
+        labeler: ImageLabeler,
         uri: Uri,
-        isCake: Boolean,
     ): Int? = try {
-        peopleIn(thumbnail(uri), faceDetector, objectDetector, isCake)
+        peopleIn(thumbnail(uri), faceDetector, objectDetector, labeler)
     } catch (e: Exception) {
         Log.w(TAG, "Could not face-check $uri", e)
         null
     }
 
     /**
-     * Counts faces of real people. A face whose centre lies inside a detected food object
-     * (the cake) is treated as part of the cake - a printed photo topper, a cartoon
-     * character or a figurine - and ignored. Only boxes the detector classifies as Food
-     * count: people are detected as unclassified objects, so treating those as cake would
-     * hide real people.
+     * Counts faces of real people. A face that is part of the cake - a printed photo
+     * topper, a cartoon character or a figurine - is ignored when either:
+     *  - its centre lies inside an object the detector classifies as Food, or
+     *  - the area around it (with the face itself blanked out) looks like cake: a topper
+     *    is surrounded by icing, a real person by hair, shoulders or background.
      */
     private suspend fun peopleIn(
-        image: InputImage,
+        bitmap: Bitmap,
         faceDetector: FaceDetector,
         objectDetector: ObjectDetector,
-        isCake: Boolean,
+        labeler: ImageLabeler,
     ): Int {
+        val image = InputImage.fromBitmap(bitmap, 0)
         val faces = faceDetector.process(image).await()
         if (faces.isEmpty()) return 0
-        val cakeAreas = runCatching { objectDetector.process(image).await() }
+        val foodAreas = runCatching { objectDetector.process(image).await() }
             .getOrDefault(emptyList())
             .filter { obj -> obj.labels.any { it.text.equals("Food", ignoreCase = true) } }
             .map { it.boundingBox }
-        val people = faces.count { face ->
-            val cx = face.boundingBox.exactCenterX().toInt()
-            val cy = face.boundingBox.exactCenterY().toInt()
-            cakeAreas.none { it.contains(cx, cy) }
+        val cakeWords = settings.labelSet() + CAKE_SURROUNDINGS
+        return faces.count { face ->
+            val box = face.boundingBox
+            val inFood = foodAreas.any { it.contains(box.centerX(), box.centerY()) }
+            val surroundings = if (inFood) emptyList() else surroundingLabels(bitmap, box, labeler)
+            val cakeAround = surroundings.filter { it.first.lowercase() in cakeWords }.maxOfOrNull { it.second } ?: 0f
+            val onCake = inFood || cakeAround >= 0.5f
+            Log.i(
+                TAG,
+                "face $box: inFood=$inFood around=${surroundings.take(4)} -> ${if (onCake) "on cake (ignored)" else "person"}",
+            )
+            !onCake
         }
-        if (people < faces.size) Log.i(TAG, "Ignored ${faces.size - people} face(s) on the cake")
-        return people
+    }
+
+    /** Labels for the region around [face] (twice its size), with the face greyed out. */
+    private suspend fun surroundingLabels(bitmap: Bitmap, face: Rect, labeler: ImageLabeler): List<Pair<String, Float>> {
+        val margin = maxOf(face.width(), face.height()) / 2
+        val region = Rect(
+            maxOf(0, face.left - margin),
+            maxOf(0, face.top - margin),
+            minOf(bitmap.width, face.right + margin),
+            minOf(bitmap.height, face.bottom + margin),
+        )
+        if (region.width() < 16 || region.height() < 16) return emptyList()
+        val crop = Bitmap.createBitmap(bitmap, region.left, region.top, region.width(), region.height())
+            .copy(Bitmap.Config.ARGB_8888, true)
+        Canvas(crop).drawRect(
+            Rect(face.left - region.left, face.top - region.top, face.right - region.left, face.bottom - region.top),
+            Paint().apply { color = Color.GRAY },
+        )
+        return labeler.process(InputImage.fromBitmap(crop, 0)).await()
+            .map { it.text to it.confidence }
+            .sortedByDescending { it.second }
     }
 
     // A thumbnail is plenty for labelling and faces, and far faster than the full image.
-    private fun thumbnail(uri: Uri): InputImage =
-        InputImage.fromBitmap(context.contentResolver.loadThumbnail(uri, Size(768, 768), null), 0)
+    private fun thumbnail(uri: Uri): Bitmap =
+        context.contentResolver.loadThumbnail(uri, Size(768, 768), null)
 
     private data class MediaItem(
         val id: Long,
@@ -253,5 +283,8 @@ class PhotoScanner(private val context: Context) {
 
     private companion object {
         const val TAG = "PhotoScanner"
+
+        /** Labels that mean "this is cake" when seen around a face. */
+        val CAKE_SURROUNDINGS = setOf("cake", "icing", "cupcake", "dessert", "baked goods", "cream", "sweetness")
     }
 }

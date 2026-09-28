@@ -160,6 +160,9 @@ check_no_crash
 
 adb logcat -d | grep -E "CakeSync|PhotoScanner|SyncWorker|AndroidRuntime" > "$OUT/logcat.txt" || true
 
+echo "== Face decisions"
+adb logcat -d -s PhotoScanner:I | grep "face Rect" | tee "$OUT/face_decisions.txt" || true
+
 echo "== People vs. cake-topper checks"
 people_ok=0
 python3 - "$OUT/photos.db" <<'PY' | tee "$OUT/people_checks.txt" || people_ok=1
