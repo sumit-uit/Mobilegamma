@@ -17,9 +17,30 @@ android {
         versionName = "0.1.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
     }
 
+    // Shared signing key, restored in CI from the CAKESYNC_KEYSTORE_BASE64 /
+    // CAKESYNC_KEYSTORE_PASSWORD GitHub secrets, so every build has the same SHA-1
+    // (registered in Google Cloud for Drive sign-in). Without them, builds fall back
+    // to the local debug key.
+    val sharedKeystore = file("cakesync.jks")
+    val sharedPassword = System.getenv("CAKESYNC_KEYSTORE_PASSWORD")
+    if (sharedKeystore.exists() && !sharedPassword.isNullOrEmpty()) {
+        signingConfigs {
+            create("shared") {
+                storeFile = sharedKeystore
+                storePassword = sharedPassword
+                keyAlias = "cakesync"
+                keyPassword = sharedPassword
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfigs.findByName("shared")?.let { signingConfig = it }
+        }
         release {
             isMinifyEnabled = false
+            signingConfigs.findByName("shared")?.let { signingConfig = it }
         }
     }
 

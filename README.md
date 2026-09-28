@@ -30,10 +30,21 @@ Google sign-in only works after you register the app in Google Cloud:
    Google account as a **test user**.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID → Android**
    - Package name: `com.mobilegamma.cakesync`
-   - SHA-1: the fingerprint of the key that signs your APK. For debug builds run
-     `./gradlew signingReport` (or `keytool -list -v -keystore ~/.android/debug.keystore -storepass android`).
-     APKs built by GitHub Actions use that runner's own debug key, so register your
-     local build's SHA-1, or add a signing key to CI.
+   - SHA-1: `ED:E8:06:C4:11:EB:CE:F9:C4:55:9D:64:93:C0:A5:3F:1A:6F:71:AD` (the shared
+     CakeSync signing key used by CI builds)
+
+### Signing key (GitHub secrets)
+CI signs every APK with one shared key, so the SHA-1 above stays the same. The key is
+not in the repo: it lives in two repository secrets (**Settings → Secrets and variables →
+Actions**):
+
+| Secret | Contents |
+|---|---|
+| `CAKESYNC_KEYSTORE_BASE64` | The keystore file (`cakesync.jks`, alias `cakesync`), base64-encoded |
+| `CAKESYNC_KEYSTORE_PASSWORD` | Its store/key password |
+
+Without these secrets, builds still work but use a temporary debug key, so Drive
+sign-in fails. Keep a backup of the keystore: losing it means registering a new SHA-1.
 
 No client ID is needed in the code: Google matches the package name and SHA-1.
 
@@ -41,8 +52,8 @@ No client ID is needed in the code: Google matches the package name and SHA-1.
 - **Android Studio:** open the folder and press Run (minSdk 29 / Android 10+).
 - **Command line:** `./gradlew assembleDebug`, then install
   `app/build/outputs/apk/debug/app-debug.apk`.
-- **CI:** every push builds a debug APK in GitHub Actions and attaches it to the run
-  as the artifact `cakesync-debug-apk`.
+- **Phone download:** every push to `main` publishes
+  <https://github.com/sumit-uit/Mobilegamma/releases/latest/download/CakeSync.apk>.
 
 ## Using it
 1. **Allow** photo access (and notifications).
