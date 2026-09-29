@@ -348,11 +348,12 @@ fun ReelDialog(count: Int, onDismiss: () -> Unit, onMake: (Uri?, Music.Track?, R
                     }
                 }
                 Text("Photo speed", style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     ReelSpeed.entries.forEach { s ->
+                        val seconds = (s.photoMs / 1000.0).toString().removeSuffix(".0")
                         FilterChip(
                             selected = speed == s, onClick = { speed = s },
-                            label = { Text("${s.label} ${s.photoMs / 1000.0}s") },
+                            label = { Text("${s.label} ${seconds}s", maxLines = 1) },
                         )
                     }
                 }
