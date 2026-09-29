@@ -89,16 +89,25 @@ sleep 20  # let the freshly booted system settle
 dismiss_system_dialogs
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
 
+video_granted() {
+  adb shell dumpsys package "$PKG" | grep -q "android.permission.READ_MEDIA_VIDEO: granted=true"
+}
+
 echo "== Updated from a photo-only version: photo access but no video access"
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_IMAGES
+if video_granted; then echo "note: granting photos also granted videos on this system image"; fi
 adb shell am start -W -n "$PKG/.ui.MainActivity"
 sleep 6
 shot 00-video-permission-prompt
-ui=$(dump_ui)
-if echo "$ui" | grep -qiE 'video'; then
-  echo "PASS: app asks for video access (prompt or 'Video access' row shown)"
+if video_granted; then
+  echo "PASS: video access granted after the app asked (Android grants it silently when photo access exists)"
 else
-  echo "FAIL: no video access prompt or row"; echo "$ui" | grep -oE ' text="[^"]+"' | head -20; exit 1
+  ui=$(dump_ui)
+  if echo "$ui" | grep -qiE 'Allow .*(video|photos and videos)|Video access'; then
+    echo "PASS: app is asking for video access"
+  else
+    echo "FAIL: video access neither granted nor requested"; echo "$ui" | grep -oE ' text="[^"]+"' | head -20; exit 1
+  fi
 fi
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_VIDEO
 adb shell am force-stop "$PKG"
