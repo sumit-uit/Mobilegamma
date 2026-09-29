@@ -281,6 +281,8 @@ fi
 
 scroll_top() { for i in 1 2 3 4; do adb shell input swipe 540 700 540 1900 200; sleep 0.5; done; }
 scroll_top
+adb shell input swipe 540 1700 540 900 400   # bring the first photos on screen
+sleep 1
 
 echo "== White background (needs the Play services model; reported, not required)"
 label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
