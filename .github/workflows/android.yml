@@ -104,12 +104,13 @@ jobs:
           pip install --quiet pillow
           python3 .github/scripts/make_composites.py test-images
           # short test videos: one of a cake, one of a non-cake scene
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
           mkdir -p test-videos
           other=$(ls test-images/other_*.jpg | head -1)
-          [ -f video-src/cake.jpg ] && ffmpeg -y -loglevel error -loop 1 -i video-src/cake.jpg -t 4 -r 10 \
-            -vf "scale=640:-2,format=yuv420p" -c:v libx264 test-videos/zz_cake_video.mp4 || true
+          ffmpeg -y -loglevel error -loop 1 -i video-src/cake.jpg -t 4 -r 10 \
+            -vf "scale=640:-2,format=yuv420p" -c:v libx264 test-videos/zz_cake_video.mp4
           ffmpeg -y -loglevel error -loop 1 -i "$other" -t 4 -r 10 \
-            -vf "scale=640:-2,format=yuv420p" -c:v libx264 test-videos/zz_other_video.mp4 || true
+            -vf "scale=640:-2,format=yuv420p" -c:v libx264 test-videos/zz_other_video.mp4
           ls -l test-videos
 
       - name: Enable KVM
