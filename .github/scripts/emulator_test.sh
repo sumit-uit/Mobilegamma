@@ -87,9 +87,21 @@ echo "MediaStore now has $(adb shell content query --uri content://media/externa
 echo "== Grant permissions and launch"
 sleep 20  # let the freshly booted system settle
 dismiss_system_dialogs
-adb shell pm grant "$PKG" android.permission.READ_MEDIA_IMAGES
-adb shell pm grant "$PKG" android.permission.READ_MEDIA_VIDEO
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
+
+echo "== Updated from a photo-only version: photo access but no video access"
+adb shell pm grant "$PKG" android.permission.READ_MEDIA_IMAGES
+adb shell am start -W -n "$PKG/.ui.MainActivity"
+sleep 6
+shot 00-video-permission-prompt
+ui=$(dump_ui)
+if echo "$ui" | grep -qiE 'video'; then
+  echo "PASS: app asks for video access (prompt or 'Video access' row shown)"
+else
+  echo "FAIL: no video access prompt or row"; echo "$ui" | grep -oE ' text="[^"]+"' | head -20; exit 1
+fi
+adb shell pm grant "$PKG" android.permission.READ_MEDIA_VIDEO
+adb shell am force-stop "$PKG"
 adb shell am start -W -n "$PKG/.ui.MainActivity"
 wait_for_text "Scan now" 60
 sleep 2

@@ -38,6 +38,7 @@ data class SettingsState(
 
 data class UiState(
     val hasPhotoPermission: Boolean = false,
+    val hasVideoPermission: Boolean = false,
     val driveConnected: Boolean = false,
     val showAll: Boolean = false,
     val photos: List<Photo> = emptyList(),
@@ -83,6 +84,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(
                     hasPhotoPermission = SyncWorker.hasPhotoPermission(getApplication()),
+                    hasVideoPermission = SyncWorker.hasVideoPermission(getApplication()),
                     driveConnected = settings.driveConnected,
                     photos = photos,
                     pendingCount = pending,

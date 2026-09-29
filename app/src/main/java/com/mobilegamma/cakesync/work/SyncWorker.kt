@@ -166,6 +166,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private const val CHANNEL_ID = "sync"
         private const val NOTIFICATION_ID = 1
 
+        /** Full access to videos; without it Android shows the app no (or only picked) videos. */
+        fun hasVideoPermission(context: Context): Boolean {
+            val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO
+                else Manifest.permission.READ_EXTERNAL_STORAGE
+            return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+        }
+
         fun hasPhotoPermission(context: Context): Boolean {
             val perms = if (Build.VERSION.SDK_INT >= 33) {
                 listOf(

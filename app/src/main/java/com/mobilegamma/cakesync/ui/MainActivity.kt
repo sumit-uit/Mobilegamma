@@ -4,7 +4,11 @@ import android.Manifest
 import android.os.Build
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import java.security.MessageDigest
@@ -122,7 +126,24 @@ private fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
+    // Ask for video access once per app start if videos are on and it's missing. Updating
+    // from a photo-only version keeps photo access but never grants videos by itself.
+    val wantVideos = state.settings?.includeVideos == true
+    var askedForVideos by rememberSaveable { mutableStateOf(false) }
+    val requestVideos = {
+        askedForVideos = true
+        permissionLauncher.launch(videoPermissions().toTypedArray())
+    }
+    LaunchedEffect(state.hasPhotoPermission, state.hasVideoPermission, wantVideos) {
+        if (state.hasPhotoPermission && wantVideos && !state.hasVideoPermission && !askedForVideos) requestVideos()
+    }
+
     val context = LocalContext.current
+    val openAppSettings = {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+        )
+    }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
     }
@@ -165,6 +186,8 @@ private fun MainScreen(viewModel: MainViewModel) {
                         }
                         permissionLauncher.launch(perms.toTypedArray())
                     },
+                    onGrantVideos = requestVideos,
+                    onOpenSettings = openAppSettings,
                     onConnectDrive = viewModel::connectDrive,
                     onScan = viewModel::scanNow,
                     onSync = viewModel::syncNow,
@@ -199,6 +222,12 @@ private fun MainScreen(viewModel: MainViewModel) {
     }
 }
 
+private fun videoPermissions(): List<String> = buildList {
+    if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.READ_MEDIA_VIDEO)
+    else add(Manifest.permission.READ_EXTERNAL_STORAGE)
+    if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+}
+
 private fun androidx.compose.foundation.lazy.grid.LazyGridScope.fullWidth(content: @Composable () -> Unit) =
     item(span = { GridItemSpan(maxLineSpan) }) { content() }
 
@@ -206,6 +235,8 @@ private fun androidx.compose.foundation.lazy.grid.LazyGridScope.fullWidth(conten
 private fun SetupCard(
     state: UiState,
     onGrantPhotos: () -> Unit,
+    onGrantVideos: () -> Unit,
+    onOpenSettings: () -> Unit,
     onConnectDrive: () -> Unit,
     onScan: () -> Unit,
     onSync: () -> Unit,
@@ -213,6 +244,19 @@ private fun SetupCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusRow("Photo access", state.hasPhotoPermission, "Allow", onGrantPhotos)
+            if (state.settings?.includeVideos == true) {
+                StatusRow("Video access", state.hasVideoPermission, "Allow", onGrantVideos)
+                if (!state.hasVideoPermission) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "No prompt? Allow \"Photos and videos\" for CakeSync in Android settings.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onOpenSettings) { Text("Open settings") }
+                    }
+                }
+            }
             StatusRow("Google Drive", state.driveConnected, "Connect", onConnectDrive)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onScan, enabled = state.hasPhotoPermission && state.scanProgress == null) {
