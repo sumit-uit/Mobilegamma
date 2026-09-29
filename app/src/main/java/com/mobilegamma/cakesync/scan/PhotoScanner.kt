@@ -32,7 +32,22 @@ import java.util.concurrent.TimeUnit
  */
 class PhotoScanner(private val context: Context) {
 
-    data class Result(val scanned: Int, val matched: Int)
+    data class Result(
+        val scanned: Int,
+        val matched: Int,
+        /** Diagnostics: videos Android lets the app see, in total and in the chosen period/folders. */
+        val videosVisible: Int = 0,
+        val videosInScope: Int = 0,
+        val videosNew: Int = 0,
+        /** Items that could not be read or analysed (kept, visible under All scanned). */
+        val failed: Int = 0,
+    ) {
+        fun summary(): String = buildString {
+            append("Scanned $scanned new item(s), $matched match(es)")
+            append(" · videos visible: $videosVisible, in period/folders: $videosInScope, new: $videosNew")
+            if (failed > 0) append(" · $failed could not be read (see All scanned)")
+        }
+    }
 
     /** A photo folder on the device, e.g. "DCIM/Camera/", with its image count. */
     data class Folder(val path: String, val count: Int)
@@ -52,10 +67,11 @@ class PhotoScanner(private val context: Context) {
             // Checking against known ids (not a "last scanned" marker) means newly added
             // folders or a longer window also pick up older photos.
             val known = store.knownIds()
-            val candidates = buildList {
-                addAll(queryMedia(IMAGES, since, settings.scanFolders))
-                if (settings.includeVideos) addAll(queryMedia(VIDEOS, since, settings.scanFolders))
-            }.filter { it.id !in known }
+            val videosInScope = if (settings.includeVideos) queryMedia(VIDEOS, since, settings.scanFolders) else emptyList()
+            val candidates = (queryMedia(IMAGES, since, settings.scanFolders) + videosInScope)
+                .filter { it.id !in known }
+            val videosVisible = if (settings.includeVideos) queryMedia(VIDEOS, 0L, emptySet()).size else 0
+            Log.i(TAG, "videos visible=$videosVisible inScope=${videosInScope.size} folders=${settings.scanFolders}")
             val labeler = ImageLabeling.getClient(
                 ImageLabelerOptions.Builder().setConfidenceThreshold(0.3f).build()
             )
@@ -79,11 +95,24 @@ class PhotoScanner(private val context: Context) {
             val total = candidates.size + backfill.size
             var scanned = 0
             var matched = 0
+            var failed = 0
             try {
                 candidates.forEachIndexed { index, item ->
                     onProgress(index, total)
                     val result = analyze(labeler, faceDetector, objectDetector, item.uri, item.isVideo)
-                        ?: return@forEachIndexed
+                    if (result == null) {
+                        // Keep it (not matched) so it shows under All scanned and can be included by hand.
+                        failed++
+                        store.insert(
+                            Photo(
+                                mediaId = item.id, uri = item.uri, displayName = item.name, mimeType = item.mimeType,
+                                takenAtMillis = item.takenAtMillis, labels = "⚠ could not analyse", score = 0f,
+                                isMatch = false, override = null, uploadedAtMillis = null, faces = 0,
+                                isVideo = item.isVideo, durationMs = item.durationMs,
+                            )
+                        )
+                        return@forEachIndexed
+                    }
                     val score = result.labels.filter { it.first.lowercase() in targets }
                         .maxOfOrNull { it.second } ?: 0f
                     val isMatch = score >= threshold
@@ -119,7 +148,14 @@ class PhotoScanner(private val context: Context) {
                 faceDetector.close()
                 objectDetector.close()
             }
-            Result(scanned, matched)
+            Result(
+                scanned = scanned,
+                matched = matched,
+                videosVisible = videosVisible,
+                videosInScope = videosInScope.size,
+                videosNew = candidates.count { it.isVideo },
+                failed = failed,
+            )
         }
 
     private class Analysis(val labels: List<Pair<String, Float>>, val faces: Int?)
@@ -191,22 +227,26 @@ class PhotoScanner(private val context: Context) {
      */
     private fun frames(uri: Uri, isVideo: Boolean): List<Bitmap> {
         if (!isVideo) return listOf(context.contentResolver.loadThumbnail(uri, Size(768, 768), null))
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(context, uri)
-            val durationUs = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull() ?: 0L) * 1000
-            listOf(0.1, 0.5, 0.9).mapNotNull { at ->
-                retriever.getScaledFrameAtTime(
-                    (durationUs * at).toLong(), MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 768, 768,
-                )
-            }.ifEmpty {
-                // Some videos report no duration; fall back to the system thumbnail.
-                listOf(context.contentResolver.loadThumbnail(uri, Size(768, 768), null))
+        val fromRetriever = runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, uri)
+                val durationUs = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 0L) * 1000
+                listOf(0.1, 0.5, 0.9).mapNotNull { at ->
+                    runCatching {
+                        retriever.getScaledFrameAtTime(
+                            (durationUs * at).toLong(), MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 768, 768,
+                        )
+                    }.getOrNull()
+                }
+            } finally {
+                retriever.release()
             }
-        } finally {
-            retriever.release()
-        }
+        }.onFailure { Log.w(TAG, "Frame extraction failed for $uri, using thumbnail", it) }
+            .getOrDefault(emptyList())
+        // Some videos can't be decoded here or report no duration; the system thumbnail still works.
+        return fromRetriever.ifEmpty { listOf(context.contentResolver.loadThumbnail(uri, Size(768, 768), null)) }
     }
 
     private data class MediaItem(
