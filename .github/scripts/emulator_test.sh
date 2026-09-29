@@ -56,6 +56,14 @@ for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
   [ -n "$pos" ] && adb shell input tap $pos
 }
 
+# Closes the on-screen keyboard if it is showing (BACK would otherwise close a dialog).
+hide_keyboard() {
+  if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
+    adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  fi
+}
+
 tap_text() {
   local pos
   pos=$(find_text "$1")
@@ -204,8 +212,7 @@ if tap_text "+ Add category"; then
   sleep 1
   tap_text "Labels to match" && adb shell input text "Beach"
   sleep 1
-  # hide the keyboard only if it covers the Save button (BACK would otherwise close the dialog)
-  if [ -z "$(find_text "Save")" ]; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+  hide_keyboard
   shot 05c-new-category
   if tap_text "Save"; then
     sleep 6
@@ -242,7 +249,7 @@ if [ -n "$label" ]; then
     sleep 2
     tap_text "Order name" && adb shell input text "Order%s1%s-%sTest"
     sleep 1
-    if [ -z "$(find_text "Save")" ]; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+    hide_keyboard
     tap_text "Save" || true
     sleep 3
     shot 05f-after-order
@@ -311,7 +318,7 @@ if [ -n "$label" ]; then
     sleep 2
     tap_text "Price or text" && adb shell input text "Rs%s1200"
     sleep 1
-    if [ -z "$(find_text "Save copies")" ]; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+    hide_keyboard
     tap_text "Save copies" || true
     sleep 10
     branded=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_branded.jpg" || true)
