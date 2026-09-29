@@ -22,6 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * One-tap photo tools. Every edit is saved as a NEW image in Pictures/CakeSync/; originals
@@ -121,6 +124,30 @@ class PhotoEditor(private val context: Context) {
         save(kit.apply(load(uri), price), "${baseName(displayName)}_branded.jpg")
     }
 
+    /** Saves a copy with a colour [filter] applied. */
+    suspend fun filter(uri: Uri, displayName: String, filter: ColorFilterPreset): Uri = withContext(Dispatchers.Default) {
+        save(brandIfEnabled(applyFilter(load(uri), filter)), "${baseName(displayName)}_filter_${filter.name.lowercase()}.jpg")
+    }
+
+    /**
+     * Saves a collage of [uris] laid out as [template] in [shape], optionally with the brand
+     * kit (logo, name, filter) and a [price] label.
+     */
+    suspend fun collage(
+        uris: List<Uri>,
+        template: CollageTemplate,
+        shape: Shape,
+        background: CollageBackground,
+        brand: Boolean,
+        price: String?,
+    ): Uri = withContext(Dispatchers.Default) {
+        val photos = uris.take(template.size).map { loadScaled(context, it, 1400) }
+        val collage = CollageRenderer.render(photos, template, shape.w, shape.h, background)
+        val kit = BrandKit.load(context)
+        val out = if (brand && (!kit.isEmpty || !price.isNullOrBlank())) kit.apply(collage, price) else collage
+        save(out, "CakeSync_collage_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".jpg")
+    }
+
     private fun brandIfEnabled(bitmap: Bitmap): Bitmap {
         val kit = BrandKit.load(context)
         return if (kit.applyToEdits && !kit.isEmpty) kit.apply(bitmap) else bitmap
@@ -147,16 +174,7 @@ class PhotoEditor(private val context: Context) {
     }
 
     /** Decodes the photo, capped at 2048px on the long side, honouring EXIF rotation. */
-    private fun load(uri: Uri): Bitmap =
-        ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
-            val longSide = maxOf(info.size.width, info.size.height)
-            if (longSide > 2048) {
-                val scale = 2048f / longSide
-                decoder.setTargetSize((info.size.width * scale).toInt(), (info.size.height * scale).toInt())
-            }
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            decoder.isMutableRequired = false
-        }
+    private fun load(uri: Uri): Bitmap = loadScaled(context, uri, 2048)
 
     private fun baseName(name: String) = name.substringBeforeLast('.')
 
@@ -179,6 +197,34 @@ class PhotoEditor(private val context: Context) {
         } catch (e: Exception) {
             resolver.delete(uri, null, null)
             throw e
+        }
+    }
+
+    companion object {
+        /** Decodes an image no larger than [maxSide] on its long side (EXIF rotation applied). */
+        fun loadScaled(context: Context, uri: Uri, maxSide: Int): Bitmap =
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+                val longSide = maxOf(info.size.width, info.size.height)
+                if (longSide > maxSide) {
+                    val scale = maxSide.toFloat() / longSide
+                    decoder.setTargetSize(
+                        (info.size.width * scale).toInt().coerceAtLeast(1),
+                        (info.size.height * scale).toInt().coerceAtLeast(1),
+                    )
+                }
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.isMutableRequired = false
+            }
+
+        /** A copy of [source] with [filter] applied (the same bitmap for None). */
+        fun applyFilter(source: Bitmap, filter: ColorFilterPreset): Bitmap {
+            val matrix = filter.matrix() ?: return source
+            val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+            Canvas(out).drawBitmap(
+                source, 0f, 0f,
+                Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(matrix) },
+            )
+            return out
         }
     }
 }

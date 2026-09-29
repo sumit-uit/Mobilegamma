@@ -15,6 +15,12 @@ import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
 import com.mobilegamma.cakesync.drive.DriveAuth
 import com.mobilegamma.cakesync.edit.BrandKit
+import com.mobilegamma.cakesync.edit.CollageBackground
+import com.mobilegamma.cakesync.edit.CollageTemplate
+import com.mobilegamma.cakesync.edit.ColorFilterPreset
+import com.mobilegamma.cakesync.edit.Music
+import com.mobilegamma.cakesync.edit.ReelOptions
+import com.mobilegamma.cakesync.edit.Creations
 import com.mobilegamma.cakesync.edit.PhotoEditor
 import com.mobilegamma.cakesync.edit.ReelMaker
 import com.mobilegamma.cakesync.drive.DriveClient
@@ -46,7 +52,7 @@ data class SettingsState(
 )
 
 /** Which photos the review grid shows. */
-enum class GridTab { MATCHES, VIDEOS, ALL }
+enum class GridTab { MATCHES, VIDEOS, ALL, CREATED }
 
 data class UiState(
     val hasPhotoPermission: Boolean = false,
@@ -72,6 +78,8 @@ data class UiState(
     val orderTags: List<String> = emptyList(),
     /** Bumped when the brand kit changes so the preview redraws. */
     val brandVersion: Int = 0,
+    /** An edit or reel just finished: offer a shortcut to the Created tab. */
+    val resultsReady: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -106,7 +114,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     GridTab.MATCHES -> store.matches()
                     GridTab.VIDEOS -> store.matches().filter { it.isVideo }
                     GridTab.ALL -> store.all()
-                }.filter { filter == null || it.category == filter } to
+                    GridTab.CREATED -> Creations.list(getApplication())
+                }.filter { tab == GridTab.CREATED || filter == null || it.category == filter } to
                     store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
             }
             _state.update {
@@ -124,7 +133,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setTab(tab: GridTab) {
-        _state.update { it.copy(tab = tab) }
+        _state.update { it.copy(tab = tab, selected = emptySet(), resultsReady = if (tab == GridTab.CREATED) false else it.resultsReady) }
         refresh()
     }
 
@@ -192,6 +201,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         SyncScheduler.syncNow(getApplication())
     }
 
+    /** Opens a creation in the phone's photo/video viewer. */
+    fun openCreated(photo: Photo) {
+        val app = getApplication<Application>()
+        runCatching {
+            app.startActivity(
+                Intent(Intent.ACTION_VIEW).setDataAndType(photo.uri, photo.mimeType)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure { e -> _state.update { it.copy(message = "Could not open: ${e.message}") } }
+    }
+
+    fun shareCreated(photo: Photo, target: Sharer.Target) {
+        val result = runCatching {
+            Sharer.share(getApplication(), listOf(photo.uri to photo.mimeType), captionFor(listOf(photo)), target)
+        }
+        _state.update { it.copy(message = result.getOrElse { e -> "Could not share: ${e.message}" }) }
+    }
+
+    fun deleteCreated(photo: Photo) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = runCatching { Creations.delete(getApplication(), photo.uri) }.getOrDefault(false)
+            _state.update { it.copy(message = if (ok) "Deleted ${photo.displayName}" else "Could not delete ${photo.displayName}") }
+            refresh()
+        }
+    }
+
     /** Long-press: start or extend a selection. */
     fun toggleSelected(photo: Photo) = _state.update {
         it.copy(selected = if (photo.mediaId in it.selected) it.selected - photo.mediaId else it.selected + photo.mediaId)
@@ -245,8 +280,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Caption for the current selection from its category's template and hashtags. */
-    fun captionForSelection(): String {
-        val photos = _state.value.photos.filter { it.mediaId in _state.value.selected }
+    fun captionForSelection(): String = captionFor(_state.value.photos.filter { it.mediaId in _state.value.selected })
+
+    private fun captionFor(photos: List<Photo>): String {
         val categoryId = photos.mapNotNull { it.category }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
         return Captions.build(photos, categories.byId(categoryId) ?: categories.all().first(), brandKit().businessName)
     }
@@ -280,19 +316,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Makes a 9:16 reel from the selected photos/videos (in grid order), with optional music. */
-    fun makeReel(music: Uri?) {
+    /**
+     * Makes a 9:16 reel from the selected photos/videos (in date order) with [options] and
+     * either the user's own [music] file or a built-in [track].
+     */
+    fun makeReel(music: Uri?, track: Music.Track?, options: ReelOptions) {
         val items = _state.value.photos.filter { it.mediaId in _state.value.selected }.sortedBy { it.takenAtMillis }
         if (items.isEmpty()) return
         viewModelScope.launch {
             _state.update { it.copy(message = "Making a reel from ${items.size} item(s)…", selected = emptySet()) }
-            val result = runCatching { ReelMaker(getApplication()).make(items, music) }
+            val result = runCatching {
+                val song = music ?: track?.let { t ->
+                    withContext(Dispatchers.Default) { Uri.fromFile(Music.file(getApplication<Application>().filesDir, t)) }
+                }
+                ReelMaker(getApplication()).make(items, song, options)
+            }
             _state.update {
                 it.copy(
+                    resultsReady = result.isSuccess,
                     message = result.fold(
-                        { "Reel saved to Movies/CakeSync (${minOf(items.size, ReelMaker.MAX_ITEMS)} item(s))" },
+                        { "Reel saved (${minOf(items.size, ReelMaker.MAX_ITEMS)} item(s)). Find it under Created." },
                         { e -> "Could not make the reel: ${e.message}" },
                     ),
+                )
+            }
+        }
+    }
+
+    /** Saves a copy of each selected photo with a colour filter. */
+    fun filterSelected(filter: ColorFilterPreset) = editSelected("${filter.label} filter") { editor, photo ->
+        editor.filter(photo.uri, photo.displayName, filter)
+    }
+
+    /** The selected photos (not videos) in date order, for collages and previews. */
+    fun selectedPhotos(): List<Photo> =
+        _state.value.photos.filter { it.mediaId in _state.value.selected && !it.isVideo }.sortedBy { it.takenAtMillis }
+
+    fun makeCollage(
+        template: CollageTemplate,
+        shape: PhotoEditor.Shape,
+        background: CollageBackground,
+        brand: Boolean,
+        price: String?,
+    ) {
+        val photos = selectedPhotos()
+        if (photos.size < template.size) {
+            _state.update { it.copy(message = "Collage: “${template.label}” needs ${template.size} photos") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(message = "Making a collage…") }
+            val result = runCatching {
+                PhotoEditor(getApplication()).collage(photos.map { it.uri }, template, shape, background, brand, price)
+            }
+            _state.update {
+                it.copy(
+                    selected = emptySet(),
+                    resultsReady = result.isSuccess,
+                    message = result.fold({ "Collage saved. Find it under Created." }, { e -> "Could not make the collage: ${e.message}" }),
                 )
             }
         }
@@ -409,10 +490,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun finishEdit(what: String, done: Int, error: String?) {
         val text = buildString {
-            append("$what: saved $done new photo(s) to Pictures/CakeSync (originals unchanged)")
+            append("$what: saved $done new photo(s), see Created (originals unchanged)")
             if (error != null) append(" · problem: $error")
         }
-        _state.update { it.copy(message = text, selected = emptySet()) }
+        _state.update { it.copy(message = text, selected = emptySet(), resultsReady = done > 0) }
     }
 
     fun loadOrderTags() {

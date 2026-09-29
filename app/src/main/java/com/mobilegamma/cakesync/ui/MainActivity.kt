@@ -94,7 +94,6 @@ import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
 import com.mobilegamma.cakesync.edit.LogoPosition
 import com.mobilegamma.cakesync.edit.PhotoEditor
-import com.mobilegamma.cakesync.edit.ReelMaker
 import com.mobilegamma.cakesync.share.Captions
 import com.mobilegamma.cakesync.share.Sharer
 import androidx.activity.result.PickVisualMediaRequest
@@ -120,6 +119,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScreen(viewModel: MainViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var openCreation by remember { mutableStateOf<Photo?>(null) }
 
     // Re-check permissions etc. whenever the user returns to the app.
     LifecycleResumeEffect(Unit) {
@@ -207,6 +207,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                     onConnectDrive = viewModel::connectDrive,
                     onScan = viewModel::scanNow,
                     onSync = viewModel::syncNow,
+                    onViewResults = { viewModel.setTab(GridTab.CREATED) },
                 )
             }
             state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, state.seenLabels, state.brandVersion, viewModel) } }
@@ -219,6 +220,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                         GridTab.MATCHES to "Matches",
                         GridTab.VIDEOS to "Videos",
                         GridTab.ALL to "All scanned",
+                        GridTab.CREATED to "✨ Created",
                     ).forEachIndexed { i, (tab, name) ->
                         if (i > 0) Spacer(Modifier.width(8.dp))
                         val selected = state.tab == tab
@@ -232,7 +234,8 @@ private fun MainScreen(viewModel: MainViewModel) {
                 }
             }
             val categoryList = state.settings?.categories.orEmpty()
-            if (categoryList.size > 1) fullWidth {
+            val created = state.tab == GridTab.CREATED
+            if (categoryList.size > 1 && !created) fullWidth {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -251,7 +254,19 @@ private fun MainScreen(viewModel: MainViewModel) {
                     }
                 }
             }
-            fullWidth {
+            if (created) fullWidth {
+                Text(
+                    if (state.photos.isEmpty()) {
+                        "Nothing made yet. Long-press a photo in Matches to select it, then use Filter, Brand, Crop, " +
+                            "White background, Collage or Reel. What you make shows up here."
+                    } else {
+                        "Everything CakeSync made: reels, collages and edited copies (also in your Gallery under " +
+                            "Pictures/CakeSync and Movies/CakeSync). Tap one to open, share or delete it."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = if (state.photos.isEmpty()) 16.dp else 0.dp),
+                )
+            } else fullWidth {
                 Text(
                     "Tap a photo to include or exclude it; long-press to select several. " +
                         "✓ = already in Drive, 👤 = skipped (person in photo), ≈ = near-duplicate of a sharper shot, 📦 = order.",
@@ -269,7 +284,15 @@ private fun MainScreen(viewModel: MainViewModel) {
             if (state.selected.isNotEmpty()) fullWidth {
                 SelectionBar(state, categoryList, viewModel)
             }
-            items(state.photos, key = { it.mediaId }) { photo ->
+            items(state.photos, key = { (if (it.isVideo) "v" else "p") + it.mediaId }) { photo ->
+                if (created) {
+                    PhotoTile(
+                        photo = photo, excludePeople = false, skipDuplicates = false, categoryName = null,
+                        selected = false, created = true,
+                        onClick = { openCreation = photo }, onLongClick = { openCreation = photo },
+                    )
+                    return@items
+                }
                 val categoryName = if (categoryList.size > 1) categoryList.firstOrNull { it.id == photo.category }?.name else null
                 val selecting = state.selected.isNotEmpty()
                 PhotoTile(
@@ -283,6 +306,15 @@ private fun MainScreen(viewModel: MainViewModel) {
                 )
             }
         }
+    }
+    openCreation?.let { item ->
+        CreationDialog(
+            item = item,
+            onDismiss = { openCreation = null },
+            onOpen = { viewModel.openCreated(item); openCreation = null },
+            onShare = { target -> viewModel.shareCreated(item, target); openCreation = null },
+            onDelete = { viewModel.deleteCreated(item); openCreation = null },
+        )
     }
 }
 
@@ -304,6 +336,7 @@ private fun SetupCard(
     onConnectDrive: () -> Unit,
     onScan: () -> Unit,
     onSync: () -> Unit,
+    onViewResults: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -338,6 +371,9 @@ private fun SetupCard(
                 else LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (state.resultsReady && state.tab != GridTab.CREATED) {
+                Button(onClick = onViewResults) { Text("👀 View results") }
+            }
             if (!state.driveConnected) {
                 // What Google matches against the Android OAuth client in Cloud Console.
                 val context = LocalContext.current
@@ -446,7 +482,8 @@ private fun SettingsCard(
                 )
             }
 
-            BrandKitSection(brandVersion, viewModel)
+            val sample = viewModel.state.collectAsStateWithLifecycle().value.photos.firstOrNull { !it.isVideo }?.uri
+            BrandKitSection(brandVersion, sample, viewModel)
 
             SwitchRow("Upload automatically every day", s.dailySyncEnabled) {
                 viewModel.updateSettings { dailySyncEnabled = it }
@@ -508,7 +545,7 @@ private fun SettingsCard(
 }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
@@ -525,8 +562,10 @@ private fun PhotoTile(
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    /** Something the app made (Created tab): no include/exclude badges. */
+    created: Boolean = false,
 ) {
-    val included = photo.included(excludePeople, skipDuplicates)
+    val included = created || photo.included(excludePeople, skipDuplicates)
     Column(
         Modifier
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -547,6 +586,7 @@ private fun PhotoTile(
                     .alpha(if (included) 1f else 0.35f),
             )
             val badge = when {
+                created -> null
                 photo.uploaded -> "✓"
                 !included && photo.override == null && photo.hasPeople -> "👤"
                 !included && photo.override == null && photo.duplicate -> "≈"
@@ -781,6 +821,9 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
     var showShare by remember { mutableStateOf(false) }
     var showReel by remember { mutableStateOf(false) }
     var showCatalog by remember { mutableStateOf(false) }
+    var showFilter by remember { mutableStateOf(false) }
+    var showCollage by remember { mutableStateOf(false) }
+    val firstPhoto = state.photos.firstOrNull { it.mediaId in state.selected && !it.isVideo }?.uri
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -797,6 +840,8 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
                 OutlinedButton(onClick = { viewModel.includeSelected(false) }) { Text("Exclude") }
                 OutlinedButton(onClick = { showOrder = true; viewModel.loadOrderTags() }) { Text("📦 Order…") }
                 if (categories.size > 1) OutlinedButton(onClick = { showMove = true }) { Text("Category…") }
+                OutlinedButton(onClick = { showFilter = true }) { Text("🎨 Filter…") }
+                OutlinedButton(onClick = { showCollage = true }) { Text("🧩 Collage…") }
                 OutlinedButton(onClick = viewModel::whiteBackgroundForSelected) { Text("✂ White background") }
                 OutlinedButton(onClick = { showCrop = true }) { Text("▢ Crop…") }
                 OutlinedButton(onClick = { showBrand = true }) { Text("🏷 Brand…") }
@@ -838,33 +883,30 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
         )
     }
     if (showReel) {
-        var music by remember { mutableStateOf<Uri?>(null) }
-        val pickMusic = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { music = it }
-        AlertDialog(
-            onDismissRequest = { showReel = false },
-            title = { Text("Make a reel") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Makes a 9:16 video from the ${state.selected.size} selected item(s) in date order: " +
-                            "photos show for ${ReelMaker.PHOTO_MS / 1000.0}s, videos use their first ${ReelMaker.VIDEO_MS / 1000}s " +
-                            "(up to ${ReelMaker.MAX_ITEMS} items). Saved to Movies/CakeSync.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (music == null) "No music" else "🎵 Music chosen", Modifier.weight(1f))
-                        TextButton(onClick = { pickMusic.launch(arrayOf("audio/*")) }) {
-                            Text(if (music == null) "Add music" else "Change")
-                        }
-                    }
-                    Text(
-                        "Use music you have the rights to; Instagram may mute copyrighted songs.",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
+        ReelDialog(
+            count = state.selected.size,
+            onDismiss = { showReel = false },
+            onMake = { music, track, options -> viewModel.makeReel(music, track, options); showReel = false },
+        )
+    }
+    if (showFilter) {
+        FilterDialog(
+            count = state.photos.count { it.mediaId in state.selected && !it.isVideo },
+            sample = firstPhoto,
+            onDismiss = { showFilter = false },
+            onSave = { viewModel.filterSelected(it); showFilter = false },
+        )
+    }
+    if (showCollage) {
+        val photos = remember { viewModel.selectedPhotos() }
+        val kit = remember { viewModel.brandKit() }
+        CollageDialog(
+            photos = photos,
+            brandKit = kit,
+            onDismiss = { showCollage = false },
+            onMake = { template, shape, background, brand, price ->
+                viewModel.makeCollage(template, shape, background, brand, price); showCollage = false
             },
-            confirmButton = { TextButton(onClick = { viewModel.makeReel(music); showReel = false }) { Text("Make reel") } },
-            dismissButton = { TextButton(onClick = { showReel = false }) { Text("Cancel") } },
         )
     }
     if (showShare) {
@@ -906,7 +948,12 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
             onDismissRequest = { showBrand = false },
             title = { Text("Add branding") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val kit = remember { viewModel.brandKit() }
+                Column(
+                    Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    EditPreview(firstPhoto, price) { kit.apply(it, price) }
                     Text(
                         "Saves copies with your logo, business name and colour filter (set up in Settings → Brand kit). " +
                             "Originals stay as they are.",
@@ -1000,7 +1047,7 @@ private fun OrderDialog(
 }
 
 @Composable
-private fun BrandKitSection(brandVersion: Int, viewModel: MainViewModel) {
+private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainViewModel) {
     var open by remember { mutableStateOf(false) }
     val kit = remember(brandVersion) { viewModel.brandKit() }
     val pickLogo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -1075,7 +1122,16 @@ private fun BrandKitSection(brandVersion: Int, viewModel: MainViewModel) {
                 )
             }
         }
-        SwitchRow("Also brand crops and white-background copies", kit.applyToEdits) {
+        Text("Preview", style = MaterialTheme.typography.labelMedium)
+        val preview = kit.copy(businessName = name.trim(), logoSize = size, logoOpacity = opacity)
+        EditPreview(sample, brandVersion, preview) { preview.apply(it) }
+        if (kit.isEmpty && name.isBlank()) {
+            Text(
+                "Choose a logo, type your business name or pick a filter to see it here.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        SwitchRow("Also brand crops, filters and white-background copies", kit.applyToEdits) {
             viewModel.saveBrandKit(kit.copy(applyToEdits = it))
         }
     }

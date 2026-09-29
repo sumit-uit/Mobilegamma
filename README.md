@@ -25,6 +25,19 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   a photo to include it anyway.
 - **Review grid:** tap a photo to include or exclude it. "All scanned" lets you
   include photos the detector missed. You can also require approval before upload.
+- **Created tab:** reels, collages and edited copies (filter, brand, crop, white background)
+  all appear under ✨ Created, where you can open, share or delete them. They are also in the
+  Gallery under Pictures/CakeSync and Movies/CakeSync. A "View results" button appears after
+  each edit.
+- **Reels:** transitions (simple cut, fade, slow zoom, slide in, zoom + fade, or a mix), photo
+  speed, a colour filter and fill-the-screen. Built-in music (Happy, Calm, Upbeat, Sweet) is
+  generated on the phone, so it's free to use with no copyright claims. You can also pick your
+  own file, for example one downloaded from Pixabay Music.
+- **Collages:** 9 layouts (2 to 9 photos) in 1:1, 4:5 or 9:16, with a background colour and
+  optional branding. The dialog shows a live preview.
+- **Filters and brand preview:** Warm, Bright, Cool, Vivid, Pastel, Vintage, Drama and B&W for
+  photo copies and reels. The brand kit and Brand… dialog show how the logo, name and price
+  will look on your own photo.
 - **Daily automatic upload:** WorkManager runs at the hour you choose, optionally only
   on Wi-Fi, and uploads into `<Drive folder>/<date taken>/`. Each photo is uploaded once.
 - **Narrow Drive permission:** uses the `drive.file` scope, so the app can only see

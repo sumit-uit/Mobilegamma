@@ -19,17 +19,71 @@ enum class LogoPosition(val label: String) {
     TOP_LEFT("↖ Top left"), TOP_RIGHT("↗ Top right"), BOTTOM_LEFT("↙ Bottom left"), BOTTOM_RIGHT("↘ Bottom right")
 }
 
-/** A consistent look applied to every photo. */
+/** A consistent look applied to photos and reels. */
 enum class ColorFilterPreset(val label: String) {
-    NONE("None"), WARM("Warm"), BRIGHT("Bright"), COOL("Cool"), VIVID("Vivid"), MONO("B&W");
+    NONE("None"), WARM("Warm"), BRIGHT("Bright"), COOL("Cool"), VIVID("Vivid"),
+    PASTEL("Pastel"), VINTAGE("Vintage"), DRAMA("Drama"), MONO("B&W");
 
-    fun matrix(): ColorMatrix? = when (this) {
+    /** Android 4x5 colour matrix (row-major, offsets on the 0–255 scale); null = no change. */
+    fun colorValues(): FloatArray? = when (this) {
         NONE -> null
-        WARM -> ColorMatrix(floatArrayOf(1.08f, 0f, 0f, 0f, 8f, 0f, 1.02f, 0f, 0f, 4f, 0f, 0f, 0.92f, 0f, -6f, 0f, 0f, 0f, 1f, 0f))
-        BRIGHT -> ColorMatrix(floatArrayOf(1.1f, 0f, 0f, 0f, 14f, 0f, 1.1f, 0f, 0f, 14f, 0f, 0f, 1.1f, 0f, 14f, 0f, 0f, 0f, 1f, 0f))
-        COOL -> ColorMatrix(floatArrayOf(0.94f, 0f, 0f, 0f, -4f, 0f, 1.0f, 0f, 0f, 2f, 0f, 0f, 1.1f, 0f, 10f, 0f, 0f, 0f, 1f, 0f))
-        VIVID -> ColorMatrix().apply { setSaturation(1.35f) }
-        MONO -> ColorMatrix().apply { setSaturation(0f) }
+        WARM -> floatArrayOf(1.08f, 0f, 0f, 0f, 8f, 0f, 1.02f, 0f, 0f, 4f, 0f, 0f, 0.92f, 0f, -6f, 0f, 0f, 0f, 1f, 0f)
+        BRIGHT -> floatArrayOf(1.1f, 0f, 0f, 0f, 14f, 0f, 1.1f, 0f, 0f, 14f, 0f, 0f, 1.1f, 0f, 14f, 0f, 0f, 0f, 1f, 0f)
+        COOL -> floatArrayOf(0.94f, 0f, 0f, 0f, -4f, 0f, 1.0f, 0f, 0f, 2f, 0f, 0f, 1.1f, 0f, 10f, 0f, 0f, 0f, 1f, 0f)
+        VIVID -> saturation(1.35f)
+        // Softer contrast, lifted and slightly pink: suits cakes and desserts.
+        PASTEL -> multiply(saturation(0.8f), floatArrayOf(0.85f, 0f, 0f, 0f, 42f, 0f, 0.85f, 0f, 0f, 34f, 0f, 0f, 0.85f, 0f, 38f, 0f, 0f, 0f, 1f, 0f))
+        VINTAGE -> floatArrayOf(
+            0.393f, 0.769f, 0.189f, 0f, 0f, 0.349f, 0.686f, 0.168f, 0f, 0f, 0.272f, 0.534f, 0.131f, 0f, 0f, 0f, 0f, 0f, 1f, 0f,
+        ).let { sepia -> blend(sepia, 0.7f) }
+        DRAMA -> multiply(saturation(1.15f), floatArrayOf(1.3f, 0f, 0f, 0f, -38f, 0f, 1.3f, 0f, 0f, -38f, 0f, 0f, 1.3f, 0f, -38f, 0f, 0f, 0f, 1f, 0f))
+        MONO -> saturation(0f)
+    }
+
+    fun matrix(): ColorMatrix? = colorValues()?.let { ColorMatrix(it) }
+
+    /**
+     * The same filter as a 4x4 column-major matrix for GL video effects (colours 0–1). The
+     * offsets go in the alpha column, which works because video frames are opaque.
+     */
+    fun glMatrix(): FloatArray? = colorValues()?.let { a ->
+        FloatArray(16).also { m ->
+            for (row in 0..2) {
+                for (col in 0..2) m[col * 4 + row] = a[row * 5 + col]
+                m[12 + row] = a[row * 5 + 4] / 255f
+            }
+            m[15] = 1f
+        }
+    }
+
+    private companion object {
+        /** Same maths as android.graphics.ColorMatrix.setSaturation. */
+        fun saturation(s: Float): FloatArray {
+            val inv = 1 - s
+            val r = 0.213f * inv
+            val g = 0.715f * inv
+            val b = 0.072f * inv
+            return floatArrayOf(r + s, g, b, 0f, 0f, r, g + s, b, 0f, 0f, r, g, b + s, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
+        }
+
+        /** [second] applied after [first] (both 4x5, alpha untouched). */
+        fun multiply(first: FloatArray, second: FloatArray): FloatArray {
+            val out = FloatArray(20)
+            for (row in 0..3) {
+                for (col in 0..4) {
+                    var v = if (col == 4) second[row * 5 + 4] else 0f
+                    for (k in 0..3) v += second[row * 5 + k] * first[k * 5 + col]
+                    out[row * 5 + col] = v
+                }
+            }
+            return out
+        }
+
+        /** Mixes [matrix] with the identity: [amount] 1 = full effect. */
+        fun blend(matrix: FloatArray, amount: Float): FloatArray = FloatArray(20) { i ->
+            val identity = if (i % 6 == 0 && i < 20) 1f else 0f
+            identity + (matrix[i] - identity) * amount
+        }
     }
 }
 

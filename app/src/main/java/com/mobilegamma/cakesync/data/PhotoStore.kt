@@ -45,7 +45,7 @@ data class Photo(
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 9) {
+    SQLiteOpenHelper(context, "photos.db", null, 10) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -97,6 +97,17 @@ class PhotoStore private constructor(context: Context) :
             db.execSQL("ALTER TABLE photos ADD COLUMN sharpness REAL")
             db.execSQL("ALTER TABLE photos ADD COLUMN dhash INTEGER")
             db.execSQL("ALTER TABLE photos ADD COLUMN duplicate INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 10) {
+            // Earlier versions scanned the app's own edits and reels as new photos; drop them.
+            db.execSQL(
+                "DELETE FROM photos WHERE display_name LIKE '%\\_branded.jpg' ESCAPE '\\' " +
+                    "OR display_name LIKE '%\\_white.jpg' ESCAPE '\\' " +
+                    "OR display_name LIKE '%\\_1080x1080.jpg' ESCAPE '\\' " +
+                    "OR display_name LIKE '%\\_1080x1350.jpg' ESCAPE '\\' " +
+                    "OR display_name LIKE '%\\_1080x1920.jpg' ESCAPE '\\' " +
+                    "OR display_name LIKE 'CakeSync\\_reel\\_%' ESCAPE '\\'"
+            )
         }
     }
 

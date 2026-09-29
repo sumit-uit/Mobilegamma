@@ -302,6 +302,9 @@ if tap_text "Settings"; then
     tap_text "Save name" || true
     sleep 1
     shot 05i-brand-kit
+    adb shell input swipe 540 1700 540 900 400; sleep 3
+    shot 05i2-brand-preview
+    if dump_ui | grep -q 'text="Preview"'; then echo "PASS: brand kit shows a preview"; else echo "NOTE: brand preview not found on screen"; fi
   fi
   scroll_top
   tap_text "Settings" || true   # collapse again
@@ -320,6 +323,8 @@ if [ -n "$label" ]; then
     tap_text "Price or text" && adb shell input text "Rs%s1200"
     sleep 1
     hide_keyboard
+    sleep 2
+    shot 05i3-brand-dialog-preview
     tap_text "Save copies" || true
     sleep 10
     branded=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_branded.jpg" || true)
@@ -355,7 +360,7 @@ fi
 scroll_top
 adb shell input swipe 540 1700 540 900 400; sleep 1
 
-echo "== Reel: select all, make a reel without music"
+echo "== Reel: select all, make a reel (defaults: mixed transitions, built-in Happy music)"
 reel_ok=1
 label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
 if [ -n "$label" ]; then
@@ -366,6 +371,7 @@ if [ -n "$label" ]; then
   adb shell input swipe 540 1700 540 1100 400; sleep 1
   if tap_text "Reel…"; then
     sleep 2
+    shot 05l-reel-dialog
     tap_text "Make reel" || true
     for i in $(seq 1 30); do
       sleep 4
@@ -377,6 +383,97 @@ if [ -n "$label" ]; then
     dump_ui | grep -oE 'text="(Reel saved|Could not make)[^"]*"' | tee -a "$OUT/reels.txt" || true
     shot 05l-after-reel
     if [ -n "$reels" ]; then echo "PASS: reel saved"; reel_ok=0; else echo "FAIL: no reel saved"; fi
+  fi
+fi
+
+echo "== Reel file: size, music track, fade from black (ffprobe)"
+reel_path=$(adb shell "content query --uri content://media/external/video/media --projection _data" | grep -oE '/storage/[^,]*CakeSync_reel_[^,]*\.mp4' | tail -1 || true)
+if [ -n "$reel_path" ] && adb pull "$reel_path" "$OUT/reel.mp4" >/dev/null; then
+  ffprobe -v error -show_entries stream=codec_type,width,height:stream_side_data=rotation:format=duration -of default=nw=1 "$OUT/reel.mp4" | tee "$OUT/reel_probe.txt"
+  if grep -q "codec_type=audio" "$OUT/reel_probe.txt"; then echo "PASS: reel has the built-in music"; else echo "FAIL: reel has no audio track"; reel_ok=1; fi
+  if grep -q "width=1080" "$OUT/reel_probe.txt" && grep -q "height=1920" "$OUT/reel_probe.txt"; then echo "PASS: reel is 1080x1920"
+  else echo "NOTE: reel size is not 1080x1920 (see reel_probe.txt)"; fi
+  for t in 0.03 1.2; do
+    y=$(ffmpeg -hide_banner -loglevel info -ss "$t" -i "$OUT/reel.mp4" -frames:v 1 -vf signalstats,metadata=print:key=lavfi.signalstats.YAVG -f null - 2>&1 \
+      | grep -oE 'YAVG=[0-9.]+' | head -1 || true)
+    echo "brightness at ${t}s: $y" | tee -a "$OUT/reel_probe.txt"
+    ffmpeg -v error -y -ss "$t" -i "$OUT/reel.mp4" -frames:v 1 "$OUT/05m-reel-frame-${t}s.png" || true
+  done
+else
+  echo "NOTE: could not pull the reel"
+fi
+
+echo "== Created tab: the View results button opens it and lists the reel"
+created_ok=1
+scroll_top
+if tap_text "View results"; then
+  sleep 3
+  shot 05n-created-tab
+  ui=$(dump_ui)
+  if echo "$ui" | grep -q "🎬 Reel"; then echo "PASS: Created tab lists the reel"; created_ok=0; else echo "FAIL: reel not in Created tab"; fi
+  echo "$ui" | grep -oE 'text="[^"]*(Reel|Branded|crop|filter|Collage)[^"]*"' | head -10 | tee "$OUT/created.txt" || true
+  # Tap the first creation: the dialog offers open/share/delete.
+  adb shell input swipe 540 1700 540 1100 400; sleep 1
+  pos=$(find_text "🎬 Reel" || true)
+  if [ -n "$pos" ]; then
+    set -- $pos
+    adb shell input tap "$1" "$(( $2 - 150 ))"; sleep 2
+    shot 05o-creation-dialog
+    if dump_ui | grep -q "Share: Instagram"; then echo "PASS: creation dialog opens"; else echo "FAIL: creation dialog missing"; created_ok=1; fi
+    tap_text "Close" || adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  fi
+else
+  echo "FAIL: no View results button after the reel"
+fi
+scroll_top
+tap_text "Matches" || true
+sleep 2
+adb shell input swipe 540 1700 540 900 400; sleep 1
+
+echo "== Collage: select all, pick a layout, save"
+collage_ok=1
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  tap_exact "All" || true
+  adb shell input swipe 540 1700 540 1100 400; sleep 1
+  if tap_text "Collage…"; then
+    sleep 5
+    shot 05p-collage-dialog
+    tap_text "2 side by side" || true
+    sleep 3
+    shot 05q-collage-preview
+    tap_text "Save collage" || true
+    sleep 10
+    n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "CakeSync_collage_" || true)
+    echo "collages: $n"
+    if [ "${n:-0}" -ge 1 ]; then echo "PASS: collage saved"; collage_ok=0; else echo "FAIL: no collage saved"; fi
+  fi
+fi
+scroll_top
+adb shell input swipe 540 1700 540 900 400; sleep 1
+
+echo "== Filter: select all, preview a filter, save copies"
+filter_ok=1
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  adb shell input swipe 540 1700 540 1100 400; sleep 1
+  if tap_text "Filter…"; then
+    sleep 3
+    tap_exact "Vintage" || true
+    sleep 3
+    shot 05r-filter-preview
+    tap_text "Save copies" || true
+    sleep 8
+    n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_filter_vintage" || true)
+    echo "filtered copies: $n"
+    if [ "${n:-0}" -ge 1 ]; then echo "PASS: filtered copy saved"; filter_ok=0; else echo "FAIL: no filtered copy"; fi
   fi
 fi
 scroll_top
@@ -455,6 +552,15 @@ PY
 matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
 if [ "${matches:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
+fi
+if [ "$created_ok" -ne 0 ]; then
+  echo "FAIL: Created tab check"; exit 1
+fi
+if [ "$collage_ok" -ne 0 ]; then
+  echo "FAIL: collage check"; exit 1
+fi
+if [ "$filter_ok" -ne 0 ]; then
+  echo "FAIL: filter check"; exit 1
 fi
 if [ "$reel_ok" -ne 0 ]; then
   echo "FAIL: reel check"; exit 1

@@ -19,6 +19,7 @@ import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.mobilegamma.cakesync.data.Categories
+import com.mobilegamma.cakesync.edit.Creations
 import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
@@ -298,6 +299,7 @@ class PhotoScanner(private val context: Context) {
                     val col = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
                     while (c.moveToNext()) {
                         val path = c.getString(col) ?: continue
+                        if (path == Creations.PHOTOS_PATH || path == Creations.VIDEOS_PATH) continue
                         counts[path] = (counts[path] ?: 0) + 1
                     }
                 }
@@ -316,8 +318,10 @@ class PhotoScanner(private val context: Context) {
             add(MediaStore.MediaColumns.DATE_ADDED)
             if (isVideo) add(MediaStore.MediaColumns.DURATION)
         }.toTypedArray()
-        var selection = "${MediaStore.MediaColumns.DATE_ADDED} > ?"
-        val args = mutableListOf(sinceSec.toString())
+        // The app's own creations (edits, reels) are never re-scanned as new photos.
+        var selection = "${MediaStore.MediaColumns.DATE_ADDED} > ? AND " +
+            "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR ${MediaStore.MediaColumns.RELATIVE_PATH} NOT IN (?, ?))"
+        val args = mutableListOf(sinceSec.toString(), Creations.PHOTOS_PATH, Creations.VIDEOS_PATH)
         if (folders.isNotEmpty()) {
             selection += " AND ${MediaStore.MediaColumns.RELATIVE_PATH} IN (${folders.joinToString { "?" }})"
             args += folders
