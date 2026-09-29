@@ -211,6 +211,35 @@ fi
 adb shell input swipe 540 700 540 1800 300 || true
 sleep 1
 
+echo "== Orders: long-press a photo, tag it 'Order 1 - Test'"
+order_ok=1
+tap_text "Settings" || true   # collapse settings so the photos are on screen
+sleep 2
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label")
+  set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900   # long-press the image
+  sleep 2
+  shot 05e-selection
+  if tap_text "Order…"; then
+    sleep 2
+    tap_text "Order name" && adb shell input text "Order%s1%s-%sTest"
+    sleep 1
+    if [ -z "$(find_text "Save")" ]; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+    tap_text "Save" || true
+    sleep 3
+    shot 05f-after-order
+    adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos-order.db" || true
+    adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos-order.db-wal" 2>/dev/null || true
+    if python3 -c "
+import sqlite3,sys
+n=sqlite3.connect('$OUT/photos-order.db').execute(\"SELECT COUNT(*) FROM photos WHERE order_tag='Order 1 - Test'\").fetchone()[0]
+print('tagged photos:', n); sys.exit(0 if n>0 else 1)"; then echo "PASS: order tag saved"; order_ok=0
+    else echo "FAIL: order tag not saved"; fi
+  fi
+fi
+
 echo "== Connect Drive (no Google account on the emulator: expect an error message, not a crash)"
 adb shell input keyevent KEYCODE_MOVE_HOME
 tap_text "Connect" || true
@@ -258,6 +287,9 @@ PY
 matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
 if [ "${matches:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
+fi
+if [ "$order_ok" -ne 0 ]; then
+  echo "FAIL: orders check"; exit 1
 fi
 if [ "$category_ok" -ne 0 ]; then
   echo "FAIL: categories check"; exit 1

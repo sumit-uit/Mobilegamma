@@ -29,6 +29,9 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -240,7 +243,8 @@ private fun MainScreen(viewModel: MainViewModel) {
             }
             fullWidth {
                 Text(
-                    "Tap a photo to include or exclude it. ✓ = already in Drive, 👤 = skipped (person in photo).",
+                    "Tap a photo to include or exclude it; long-press to select several. " +
+                        "✓ = already in Drive, 👤 = skipped (person in photo), 📦 = order.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -252,9 +256,20 @@ private fun MainScreen(viewModel: MainViewModel) {
                     modifier = Modifier.padding(vertical = 16.dp),
                 )
             }
+            if (state.selected.isNotEmpty()) fullWidth {
+                SelectionBar(state, categoryList, viewModel)
+            }
             items(state.photos, key = { it.mediaId }) { photo ->
                 val categoryName = if (categoryList.size > 1) categoryList.firstOrNull { it.id == photo.category }?.name else null
-                PhotoTile(photo, state.settings?.excludePeople ?: true, categoryName, onClick = { viewModel.toggle(photo) })
+                val selecting = state.selected.isNotEmpty()
+                PhotoTile(
+                    photo = photo,
+                    excludePeople = state.settings?.excludePeople ?: true,
+                    categoryName = categoryName,
+                    selected = photo.mediaId in state.selected,
+                    onClick = { if (selecting) viewModel.toggleSelected(photo) else viewModel.toggle(photo) },
+                    onLongClick = { viewModel.toggleSelected(photo) },
+                )
             }
         }
     }
@@ -470,9 +485,24 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun PhotoTile(photo: Photo, excludePeople: Boolean, categoryName: String?, onClick: () -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+private fun PhotoTile(
+    photo: Photo,
+    excludePeople: Boolean,
+    categoryName: String?,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     val included = photo.included(excludePeople)
-    Column(Modifier.clickable(onClick = onClick)) {
+    Column(
+        Modifier
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .then(
+                if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
+                else Modifier
+            )
+    ) {
         Box {
             AsyncImage(
                 model = photo.uri,
@@ -490,6 +520,17 @@ private fun PhotoTile(photo: Photo, excludePeople: Boolean, categoryName: String
                 !included -> "✕"
                 photo.override == true -> "＋"
                 else -> null
+            }
+            if (selected) {
+                Text(
+                    "☑",
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
+                        .padding(horizontal = 6.dp),
+                )
             }
             if (photo.isVideo) {
                 Text(
@@ -516,7 +557,7 @@ private fun PhotoTile(photo: Photo, excludePeople: Boolean, categoryName: String
             }
         }
         Text(
-            (categoryName?.let { "$it · " } ?: "") +
+            (photo.orderTag?.let { "📦 $it · " } ?: "") + (categoryName?.let { "$it · " } ?: "") +
                 (if (photo.hasPeople) "👤 ${photo.faces} · " else "") + photo.labels.ifEmpty { "no labels" },
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
@@ -677,6 +718,93 @@ private fun CategoryDialog(
                 },
             ) { Text("Save") }
         },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: MainViewModel) {
+    var showOrder by remember { mutableStateOf(false) }
+    var showMove by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${state.selected.size} selected", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = viewModel::selectAllShown) { Text("All") }
+                TextButton(onClick = viewModel::clearSelection) { Text("Done") }
+            }
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                OutlinedButton(onClick = { viewModel.includeSelected(true) }) { Text("Include") }
+                OutlinedButton(onClick = { viewModel.includeSelected(false) }) { Text("Exclude") }
+                OutlinedButton(onClick = { showOrder = true; viewModel.loadOrderTags() }) { Text("📦 Order…") }
+                if (categories.size > 1) OutlinedButton(onClick = { showMove = true }) { Text("Category…") }
+            }
+        }
+    }
+    if (showOrder) {
+        OrderDialog(
+            suggestions = state.orderTags,
+            onDismiss = { showOrder = false },
+            onSave = { viewModel.tagSelected(it); showOrder = false },
+            onRemove = { viewModel.tagSelected(null); showOrder = false },
+        )
+    }
+    if (showMove) {
+        AlertDialog(
+            onDismissRequest = { showMove = false },
+            title = { Text("Move to category") },
+            text = {
+                Column {
+                    categories.forEach { c ->
+                        TextButton(onClick = { viewModel.moveSelectedTo(c.id); showMove = false }) { Text(c.name) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showMove = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+@Composable
+private fun OrderDialog(
+    suggestions: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var tag by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Tag as order") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "These photos will upload to <category>/Orders/<name>/ in Drive. " +
+                        "Photos already uploaded stay where they are.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = tag, onValueChange = { tag = it }, singleLine = true,
+                    label = { Text("Order name, e.g. Order 123 - Priya") }, modifier = Modifier.fillMaxWidth(),
+                )
+                if (suggestions.isNotEmpty()) {
+                    Text("Recent orders:", style = MaterialTheme.typography.labelSmall)
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        suggestions.take(15).forEach { s ->
+                            FilterChip(selected = tag == s, onClick = { tag = s }, label = { Text(s) })
+                        }
+                    }
+                }
+                TextButton(onClick = onRemove) { Text("Remove order tag") }
+            }
+        },
+        confirmButton = { TextButton(enabled = tag.isNotBlank(), onClick = { onSave(tag) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

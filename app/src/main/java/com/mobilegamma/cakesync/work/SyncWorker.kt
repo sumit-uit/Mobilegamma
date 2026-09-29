@@ -84,8 +84,16 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 // to the first category.
                 val category = categories.byId(photo.category) ?: defaultCategory
                 val rootId = rootFolders.getOrPut(category.id) { ensureRootFolder(drive, category) }
-                val day = dayFormat.format(Date(photo.takenAtMillis))
-                val folderId = dayFolders.getOrPut("${category.id}/$day") { drive.findOrCreateFolder(day, rootId) }
+                // Tagged photos go to <category>/Orders/<order>/, others to <category>/<yyyy-MM-dd>/.
+                val folderId = if (photo.orderTag != null) {
+                    val ordersId = dayFolders.getOrPut("${category.id}/Orders") { drive.findOrCreateFolder("Orders", rootId) }
+                    dayFolders.getOrPut("${category.id}/Orders/${photo.orderTag}") {
+                        drive.findOrCreateFolder(photo.orderTag, ordersId)
+                    }
+                } else {
+                    val day = dayFormat.format(Date(photo.takenAtMillis))
+                    dayFolders.getOrPut("${category.id}/$day") { drive.findOrCreateFolder(day, rootId) }
+                }
                 val fileId = drive.uploadFile(photo.displayName, photo.mimeType, folderId, size) {
                     resolver.openInputStream(photo.uri) ?: throw IOException("Cannot open ${photo.uri}")
                 }

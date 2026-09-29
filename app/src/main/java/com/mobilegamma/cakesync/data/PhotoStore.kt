@@ -26,6 +26,8 @@ data class Photo(
     val durationMs: Long? = null,
     /** Id of the matched [Category]; null when nothing matched. */
     val category: String? = null,
+    /** Customer/order tag, e.g. "Order #123 / Priya"; uploads then go to that order's folder. */
+    val orderTag: String? = null,
 ) {
     val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
@@ -37,7 +39,7 @@ data class Photo(
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 7) {
+    SQLiteOpenHelper(context, "photos.db", null, 8) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -57,7 +59,9 @@ class PhotoStore private constructor(context: Context) :
                 faces INTEGER,
                 is_video INTEGER NOT NULL DEFAULT 0,
                 duration_ms INTEGER,
-                category TEXT
+                category TEXT,
+                category_manual INTEGER NOT NULL DEFAULT 0,
+                order_tag TEXT
             )
             """.trimIndent()
         )
@@ -75,6 +79,10 @@ class PhotoStore private constructor(context: Context) :
             // Categories: everything matched so far belongs to the first (Cake) category.
             db.execSQL("ALTER TABLE photos ADD COLUMN category TEXT")
             db.execSQL("UPDATE photos SET category = '${Categories.DEFAULT_ID}' WHERE is_match = 1")
+        }
+        if (oldVersion < 8) {
+            db.execSQL("ALTER TABLE photos ADD COLUMN category_manual INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE photos ADD COLUMN order_tag TEXT")
         }
     }
 
@@ -105,6 +113,40 @@ class PhotoStore private constructor(context: Context) :
         writableDatabase.insertWithOnConflict("photos", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
 
+    /** Include (true), exclude (false) or reset (null) several photos at once. */
+    fun setOverride(mediaIds: Collection<Long>, include: Boolean?) = mediaIds.forEach { setOverride(it, include) }
+
+    /** Tags photos with an order/customer name, or clears the tag with null. */
+    fun setOrder(mediaIds: Collection<Long>, tag: String?) = updateEach(mediaIds) {
+        if (tag == null) putNull("order_tag") else put("order_tag", tag)
+    }
+
+    /** Moves photos to a category by hand and includes them; category edits won't undo this. */
+    fun setCategoryManually(mediaIds: Collection<Long>, categoryId: String) = updateEach(mediaIds) {
+        put("category", categoryId)
+        put("category_manual", 1)
+        put("override", 1)
+    }
+
+    /** Order tags in use, most recent first. */
+    fun orderTags(): List<String> =
+        readableDatabase.rawQuery(
+            "SELECT order_tag, MAX(taken_at) t FROM photos WHERE order_tag IS NOT NULL GROUP BY order_tag ORDER BY t DESC",
+            null,
+        ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+
+    private fun updateEach(mediaIds: Collection<Long>, fill: ContentValues.() -> Unit) {
+        val db = writableDatabase
+        val values = ContentValues().apply(fill)
+        db.beginTransaction()
+        try {
+            mediaIds.forEach { db.update("photos", values, "media_id = ?", arrayOf(it.toString())) }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun setFaces(mediaId: Long, faces: Int) {
         val values = ContentValues().apply { put("faces", faces) }
         writableDatabase.update("photos", values, "media_id = ?", arrayOf(mediaId.toString()))
@@ -128,7 +170,7 @@ class PhotoStore private constructor(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (photo in all(limit = Int.MAX_VALUE)) {
+            for (photo in query("WHERE category_manual = 0")) {
                 val result = classify(parseLabels(photo.labels))
                 val values = ContentValues().apply {
                     put("score", result.score)
@@ -199,6 +241,7 @@ class PhotoStore private constructor(context: Context) :
             isVideo = getInt(getColumnIndexOrThrow("is_video")) == 1,
             durationMs = getColumnIndexOrThrow("duration_ms").let { if (isNull(it)) null else getLong(it) },
             category = getColumnIndexOrThrow("category").let { if (isNull(it)) null else getString(it) },
+            orderTag = getColumnIndexOrThrow("order_tag").let { if (isNull(it)) null else getString(it) },
         )
     }
 

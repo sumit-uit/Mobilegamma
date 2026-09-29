@@ -57,6 +57,10 @@ data class UiState(
     val categoryFilter: String? = null,
     /** Labels seen in scanned photos, offered as suggestions when editing a category. */
     val seenLabels: List<String> = emptyList(),
+    /** Photos picked with a long-press, for bulk actions. */
+    val selected: Set<Long> = emptySet(),
+    /** Order tags already used, offered as suggestions. */
+    val orderTags: List<String> = emptyList(),
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -175,6 +179,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun syncNow() {
         _state.update { it.copy(message = "Uploading in the background…") }
         SyncScheduler.syncNow(getApplication())
+    }
+
+    /** Long-press: start or extend a selection. */
+    fun toggleSelected(photo: Photo) = _state.update {
+        it.copy(selected = if (photo.mediaId in it.selected) it.selected - photo.mediaId else it.selected + photo.mediaId)
+    }
+
+    fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
+
+    fun selectAllShown() = _state.update { s -> s.copy(selected = s.photos.map { it.mediaId }.toSet()) }
+
+    fun includeSelected(include: Boolean) = onSelected { store.setOverride(it, include) }
+
+    /** Tags the selected photos with an order/customer name (null removes the tag). */
+    fun tagSelected(tag: String?) = onSelected { store.setOrder(it, tag?.trim()?.ifBlank { null }) }
+
+    fun moveSelectedTo(categoryId: String) = onSelected { store.setCategoryManually(it, categoryId) }
+
+    fun loadOrderTags() {
+        viewModelScope.launch {
+            val tags = withContext(Dispatchers.IO) { store.orderTags() }
+            _state.update { it.copy(orderTags = tags) }
+        }
+    }
+
+    private fun onSelected(action: (Set<Long>) -> Unit) {
+        val ids = _state.value.selected
+        if (ids.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            action(ids)
+            _state.update { it.copy(selected = emptySet()) }
+            refresh()
+        }
     }
 
     /** Cycles a photo between included and excluded (an explicit user decision). */
