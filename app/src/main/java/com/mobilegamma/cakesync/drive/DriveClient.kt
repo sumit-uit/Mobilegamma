@@ -65,6 +65,13 @@ class DriveClient(private val accessToken: String) {
         execute(Request.Builder().url(url).post(body)).use { it.jsonOrThrow().getString("id") }
     }
 
+    /** Shares a file or folder with "anyone with the link" (viewer). */
+    suspend fun makePublic(fileId: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("role", "reader").put("type", "anyone").toString().toRequestBody(JSON)
+        execute(Request.Builder().url("$API/files/$fileId/permissions").post(body)).use { it.jsonOrThrow() }
+        Unit
+    }
+
     suspend fun findOrCreateFolder(name: String, parentId: String?): String =
         findFolder(name, parentId) ?: createFolder(name, parentId)
 

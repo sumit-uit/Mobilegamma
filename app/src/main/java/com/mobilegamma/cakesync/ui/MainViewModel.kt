@@ -16,6 +16,11 @@ import com.mobilegamma.cakesync.data.Settings
 import com.mobilegamma.cakesync.drive.DriveAuth
 import com.mobilegamma.cakesync.edit.BrandKit
 import com.mobilegamma.cakesync.edit.PhotoEditor
+import com.mobilegamma.cakesync.edit.ReelMaker
+import com.mobilegamma.cakesync.drive.DriveClient
+import com.mobilegamma.cakesync.share.Captions
+import com.mobilegamma.cakesync.share.Catalog
+import com.mobilegamma.cakesync.share.Sharer
 import com.mobilegamma.cakesync.scan.PhotoScanner
 import com.mobilegamma.cakesync.work.SyncScheduler
 import com.mobilegamma.cakesync.work.SyncWorker
@@ -237,6 +242,145 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+    }
+
+    /** Caption for the current selection from its category's template and hashtags. */
+    fun captionForSelection(): String {
+        val photos = _state.value.photos.filter { it.mediaId in _state.value.selected }
+        val categoryId = photos.mapNotNull { it.category }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+        return Captions.build(photos, categories.byId(categoryId) ?: categories.all().first(), brandKit().businessName)
+    }
+
+    /**
+     * Shares the selection to [target] with [caption]. With [brand], photos are shared as
+     * branded copies (created first); videos are shared as they are.
+     */
+    fun shareSelected(target: Sharer.Target, caption: String, brand: Boolean) {
+        val photos = _state.value.photos.filter { it.mediaId in _state.value.selected }
+        if (photos.isEmpty()) return
+        viewModelScope.launch {
+            val items = mutableListOf<Pair<Uri, String>>()
+            val editor = PhotoEditor(getApplication())
+            for ((i, photo) in photos.withIndex()) {
+                if (brand && !photo.isVideo) {
+                    _state.update { it.copy(message = "Branding ${i + 1} of ${photos.size}…") }
+                    val branded = runCatching { editor.brand(photo.uri, photo.displayName, null) }.getOrNull()
+                    items += (branded ?: photo.uri) to "image/jpeg"
+                } else {
+                    items += photo.uri to photo.mimeType
+                }
+            }
+            val result = runCatching { Sharer.share(getApplication(), items, caption, target) }
+            _state.update {
+                it.copy(
+                    selected = emptySet(),
+                    message = result.getOrElse { e -> "Could not share: ${e.message}" },
+                )
+            }
+        }
+    }
+
+    /** Makes a 9:16 reel from the selected photos/videos (in grid order), with optional music. */
+    fun makeReel(music: Uri?) {
+        val items = _state.value.photos.filter { it.mediaId in _state.value.selected }.sortedBy { it.takenAtMillis }
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            _state.update { it.copy(message = "Making a reel from ${items.size} item(s)…", selected = emptySet()) }
+            val result = runCatching { ReelMaker(getApplication()).make(items, music) }
+            _state.update {
+                it.copy(
+                    message = result.fold(
+                        { "Reel saved to Movies/CakeSync (${minOf(items.size, ReelMaker.MAX_ITEMS)} item(s))" },
+                        { e -> "Could not make the reel: ${e.message}" },
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Writes a Meta catalog CSV (Commerce Manager bulk upload) for the selected photos that
+     * are already in Drive, sharing each image by link so Meta can fetch it.
+     */
+    fun exportCatalog(price: String) {
+        val selected = _state.value.photos.filter { it.mediaId in _state.value.selected && !it.isVideo }
+        val uploaded = selected.filter { it.driveFileId != null }
+        if (uploaded.isEmpty()) {
+            _state.update { it.copy(message = "Catalog: upload these photos to Drive first (catalog images must be online)") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(message = "Catalog: sharing ${uploaded.size} image(s)…", selected = emptySet()) }
+            val result = runCatching {
+                val drive = DriveClient(driveToken())
+                val business = brandKit().businessName
+                val items = uploaded.map { photo ->
+                    drive.makePublic(photo.driveFileId!!)
+                    val category = categories.byId(photo.category)?.name ?: "Cake"
+                    val date = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault())
+                        .format(java.util.Date(photo.takenAtMillis))
+                    Catalog.Item(
+                        id = "cakesync-${photo.mediaId}",
+                        title = listOfNotNull(category, photo.orderTag).joinToString(" – "),
+                        description = listOfNotNull("$category made $date", business.ifBlank { null }).joinToString(" · "),
+                        imageLink = Catalog.driveImageLink(photo.driveFileId),
+                        price = price.trim(),
+                        brand = business,
+                    )
+                }
+                saveDownload("CakeSync_catalog_${System.currentTimeMillis() / 1000}.csv", "text/csv", Catalog.toCsv(items))
+                items.size
+            }
+            _state.update {
+                it.copy(
+                    message = result.fold(
+                        { n ->
+                            "Catalog: $n item(s) saved to Downloads. Upload it in Meta Commerce Manager → Catalog → Data sources" +
+                                (if (selected.size > n) " (${selected.size - n} not yet in Drive were skipped)" else "")
+                        },
+                        { e -> "Catalog failed: ${e.message}" },
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Shares a category's Drive folder with "anyone with the link" and returns the link. */
+    fun portfolioLink(category: Category, onLink: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val drive = DriveClient(driveToken())
+                val id = settings.rootFolderId(category)?.takeIf { drive.folderExists(it) }
+                    ?: drive.findOrCreateFolder(category.driveFolder, null).also { settings.setRootFolderId(category, it) }
+                drive.makePublic(id)
+                Catalog.driveFolderLink(id)
+            }
+            result.onSuccess(onLink)
+            _state.update {
+                it.copy(message = result.fold({ "Portfolio link for ${category.name}: $it" }, { e -> "Portfolio link failed: ${e.message}" }))
+            }
+        }
+    }
+
+    private suspend fun driveToken(): String =
+        when (val auth = auth.authorize()) {
+            is DriveAuth.Outcome.Token -> auth.accessToken
+            is DriveAuth.Outcome.NeedsConsent -> {
+                _state.update { it.copy(consentIntent = auth.pendingIntent) }
+                throw IllegalStateException("connect Google Drive first")
+            }
+        }
+
+    private suspend fun saveDownload(name: String, mime: String, text: String) = withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/CakeSync")
+        }
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw java.io.IOException("Could not create $name")
+        resolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
     }
 
     private fun editSelected(what: String, edit: suspend (PhotoEditor, Photo) -> Unit) {

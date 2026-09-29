@@ -19,6 +19,10 @@ data class Category(
     val threshold: Float,
     /** Top-level Drive folder for this category's uploads. */
     val driveFolder: String,
+    /** Hashtags added to captions, e.g. "#homebaker #cake #pune". */
+    val hashtags: String = "",
+    /** Caption template; see [Captions] for the {placeholders}. Blank = default template. */
+    val captionTemplate: String = "",
 ) {
     fun labelSet(): Set<String> =
         labels.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
@@ -52,6 +56,8 @@ class Categories(context: Context) {
                 labels = o.getString("labels"),
                 threshold = o.getDouble("threshold").toFloat(),
                 driveFolder = o.getString("driveFolder"),
+                hashtags = o.optString("hashtags", ""),
+                captionTemplate = o.optString("captionTemplate", ""),
             )
         }.ifEmpty { listOf(defaultFromOldSettings()) }
     }
@@ -66,6 +72,8 @@ class Categories(context: Context) {
                     .put("labels", it.labels)
                     .put("threshold", it.threshold.toDouble())
                     .put("driveFolder", it.driveFolder)
+                    .put("hashtags", it.hashtags)
+                    .put("captionTemplate", it.captionTemplate)
             )
         }
         prefs.edit { putString(KEY, array.toString()) }

@@ -323,6 +323,57 @@ scroll_top
 adb shell input swipe 540 1700 540 900 400   # bring the first photos on screen
 sleep 1
 
+echo "== Share: select photos, Share… → Other apps… opens the Android share sheet"
+share_ok=1
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  adb shell input swipe 540 1700 540 1100 400; sleep 1
+  if tap_text "Share…"; then
+    sleep 2
+    shot 05j-share-dialog
+    dump_ui | grep -oE 'text="[^"]*#[^"]*"' | head -3 | tee "$OUT/caption.txt" || true
+    tap_text "Other apps" || true
+    sleep 4
+    shot 05k-share-sheet
+    if dump_ui | grep -qE 'Share [0-9]+ item|Share with|Nearby|Copy'; then echo "PASS: share sheet opened"; share_ok=0
+    else echo "FAIL: share sheet not shown"; fi
+    adb shell input keyevent KEYCODE_BACK; sleep 2
+    adb shell am start -n "$PKG/.ui.MainActivity" >/dev/null; sleep 3
+  fi
+fi
+scroll_top
+adb shell input swipe 540 1700 540 900 400; sleep 1
+
+echo "== Reel: select all, make a reel without music"
+reel_ok=1
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  tap_exact "All" || true
+  adb shell input swipe 540 1700 540 1100 400; sleep 1
+  if tap_text "Reel…"; then
+    sleep 2
+    tap_text "Make reel" || true
+    for i in $(seq 1 30); do
+      sleep 4
+      reels=$(adb shell "content query --uri content://media/external/video/media --projection _display_name:duration:width:height" | grep "CakeSync_reel_" || true)
+      [ -n "$reels" ] && break
+    done
+    echo "$reels" | tee "$OUT/reels.txt"
+    scroll_top
+    dump_ui | grep -oE 'text="(Reel saved|Could not make)[^"]*"' | tee -a "$OUT/reels.txt" || true
+    shot 05l-after-reel
+    if [ -n "$reels" ]; then echo "PASS: reel saved"; reel_ok=0; else echo "FAIL: no reel saved"; fi
+  fi
+fi
+scroll_top
+adb shell input swipe 540 1700 540 900 400; sleep 1
+
 echo "== White background (needs the Play services model; reported, not required)"
 label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
 if [ -n "$label" ]; then
@@ -396,6 +447,12 @@ PY
 matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
 if [ "${matches:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
+fi
+if [ "$reel_ok" -ne 0 ]; then
+  echo "FAIL: reel check"; exit 1
+fi
+if [ "$share_ok" -ne 0 ]; then
+  echo "FAIL: share check"; exit 1
 fi
 if [ "$brand_ok" -ne 0 ]; then
   echo "FAIL: branding check"; exit 1

@@ -94,6 +94,9 @@ import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
 import com.mobilegamma.cakesync.edit.LogoPosition
 import com.mobilegamma.cakesync.edit.PhotoEditor
+import com.mobilegamma.cakesync.edit.ReelMaker
+import com.mobilegamma.cakesync.share.Captions
+import com.mobilegamma.cakesync.share.Sharer
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.layout.size
 
@@ -410,6 +413,20 @@ private fun SettingsCard(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
+                    val context = LocalContext.current
+                    TextButton(onClick = {
+                        viewModel.portfolioLink(category) { link ->
+                            context.getSystemService(android.content.ClipboardManager::class.java)
+                                .setPrimaryClip(android.content.ClipData.newPlainText("Portfolio", link))
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).setType("text/plain")
+                                        .putExtra(Intent.EXTRA_TEXT, "${category.name} gallery: $link"),
+                                    "Share portfolio link",
+                                )
+                            )
+                        }
+                    }) { Text("🔗 Link") }
                     TextButton(onClick = { editing = category; viewModel.loadSeenLabels() }) { Text("Edit") }
                 }
             }
@@ -675,6 +692,8 @@ private fun CategoryDialog(
     var labels by remember { mutableStateOf(initial.labels) }
     var folder by remember { mutableStateOf(initial.driveFolder) }
     var threshold by remember { mutableFloatStateOf(initial.threshold) }
+    var hashtags by remember { mutableStateOf(initial.hashtags) }
+    var captionTemplate by remember { mutableStateOf(initial.captionTemplate.ifBlank { Captions.DEFAULT_TEMPLATE }) }
     val chosen = labels.split(',').map { it.trim() }.filter { it.isNotEmpty() }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -714,6 +733,18 @@ private fun CategoryDialog(
                     label = { Text("Drive folder") }, placeholder = { Text(name.ifBlank { "Folder name" }) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                OutlinedTextField(
+                    value = hashtags, onValueChange = { hashtags = it },
+                    label = { Text("Hashtags for captions, e.g. homebaker cake pune") }, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = captionTemplate, onValueChange = { captionTemplate = it }, minLines = 3,
+                    label = { Text("Caption template") }, modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Placeholders: ${Captions.PLACEHOLDERS.joinToString(" ")}",
+                    style = MaterialTheme.typography.labelSmall,
+                )
                 if (!isNew && canDelete) {
                     TextButton(onClick = onDelete) { Text("Delete this category") }
                 }
@@ -729,6 +760,8 @@ private fun CategoryDialog(
                             labels = chosen.joinToString(", "),
                             threshold = threshold,
                             driveFolder = folder.trim().ifBlank { name.trim() },
+                            hashtags = Captions.normaliseHashtags(hashtags),
+                            captionTemplate = captionTemplate.trim().takeIf { it != Captions.DEFAULT_TEMPLATE }.orEmpty(),
                         )
                     )
                 },
@@ -745,6 +778,9 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
     var showMove by remember { mutableStateOf(false) }
     var showCrop by remember { mutableStateOf(false) }
     var showBrand by remember { mutableStateOf(false) }
+    var showShare by remember { mutableStateOf(false) }
+    var showReel by remember { mutableStateOf(false) }
+    var showCatalog by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -764,6 +800,9 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
                 OutlinedButton(onClick = viewModel::whiteBackgroundForSelected) { Text("✂ White background") }
                 OutlinedButton(onClick = { showCrop = true }) { Text("▢ Crop…") }
                 OutlinedButton(onClick = { showBrand = true }) { Text("🏷 Brand…") }
+                OutlinedButton(onClick = { showReel = true }) { Text("🎬 Reel…") }
+                OutlinedButton(onClick = { showCatalog = true }) { Text("🛒 Catalog…") }
+                Button(onClick = { showShare = true }) { Text("📤 Share…") }
             }
         }
     }
@@ -773,6 +812,92 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
             onDismiss = { showOrder = false },
             onSave = { viewModel.tagSelected(it); showOrder = false },
             onRemove = { viewModel.tagSelected(null); showOrder = false },
+        )
+    }
+    if (showCatalog) {
+        var price by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showCatalog = false },
+            title = { Text("Export catalog") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Creates a product list (CSV) for Meta Commerce Manager, which feeds your Facebook/Instagram " +
+                            "shop and WhatsApp Business catalog. Only photos already uploaded to Drive can be included, " +
+                            "and their Drive copies become viewable by link so Meta can show them.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = price, onValueChange = { price = it }, singleLine = true,
+                        label = { Text("Price for all, e.g. 1200.00 INR (optional)") }, modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { viewModel.exportCatalog(price); showCatalog = false }) { Text("Export") } },
+            dismissButton = { TextButton(onClick = { showCatalog = false }) { Text("Cancel") } },
+        )
+    }
+    if (showReel) {
+        var music by remember { mutableStateOf<Uri?>(null) }
+        val pickMusic = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { music = it }
+        AlertDialog(
+            onDismissRequest = { showReel = false },
+            title = { Text("Make a reel") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Makes a 9:16 video from the ${state.selected.size} selected item(s) in date order: " +
+                            "photos show for ${ReelMaker.PHOTO_MS / 1000.0}s, videos use their first ${ReelMaker.VIDEO_MS / 1000}s " +
+                            "(up to ${ReelMaker.MAX_ITEMS} items). Saved to Movies/CakeSync.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (music == null) "No music" else "🎵 Music chosen", Modifier.weight(1f))
+                        TextButton(onClick = { pickMusic.launch(arrayOf("audio/*")) }) {
+                            Text(if (music == null) "Add music" else "Change")
+                        }
+                    }
+                    Text(
+                        "Use music you have the rights to; Instagram may mute copyrighted songs.",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { viewModel.makeReel(music); showReel = false }) { Text("Make reel") } },
+            dismissButton = { TextButton(onClick = { showReel = false }) { Text("Cancel") } },
+        )
+    }
+    if (showShare) {
+        val kitReady = remember { !viewModel.brandKit().isEmpty }
+        var caption by remember { mutableStateOf(viewModel.captionForSelection()) }
+        var brand by remember { mutableStateOf(kitReady) }
+        AlertDialog(
+            onDismissRequest = { showShare = false },
+            title = { Text("Share ${state.selected.size} item(s)") },
+            text = {
+                Column(
+                    Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = caption, onValueChange = { caption = it },
+                        label = { Text("Caption (copied for you)") }, modifier = Modifier.fillMaxWidth(), minLines = 3,
+                    )
+                    if (kitReady) SwitchRow("Add my branding to photos", brand) { brand = it }
+                    Text(
+                        "Opens the app with your photos attached; you press Post there. " +
+                            "Instagram doesn't take captions from other apps, so paste the copied caption.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Sharer.Target.entries.forEach { target ->
+                        OutlinedButton(
+                            onClick = { viewModel.shareSelected(target, caption, brand); showShare = false },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(target.label) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showShare = false }) { Text("Cancel") } },
         )
     }
     if (showBrand) {

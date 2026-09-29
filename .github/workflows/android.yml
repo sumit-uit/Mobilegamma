@@ -33,7 +33,7 @@ jobs:
       - name: Build debug APK
         env:
           CAKESYNC_KEYSTORE_PASSWORD: ${{ secrets.CAKESYNC_KEYSTORE_PASSWORD }}
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace
 
       - name: Show APK signing certificate
         run: |
@@ -151,7 +151,7 @@ jobs:
           {
             echo "# Emulator run for ${GITHUB_SHA::7}"
             echo
-            echo '```'; cat result.txt labels.txt people_checks.txt edited.txt white_background.txt 2>/dev/null || true; echo '```'
+            echo '```'; cat result.txt labels.txt people_checks.txt caption.txt reels.txt white_background.txt 2>/dev/null || true; echo '```'
             for f in *.png; do [ -e "$f" ] || continue; echo; echo "## $f"; echo "![]($f)"; done
           } > README.md
           git init -q -b emulator-screenshots

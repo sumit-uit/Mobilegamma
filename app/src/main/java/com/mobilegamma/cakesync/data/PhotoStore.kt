@@ -32,6 +32,8 @@ data class Photo(
     val sharpness: Double? = null,
     /** A near-identical shot of a sharper photo taken moments apart. */
     val duplicate: Boolean = false,
+    /** Id of the uploaded copy in Google Drive. */
+    val driveFileId: String? = null,
 ) {
     val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
@@ -309,6 +311,7 @@ class PhotoStore private constructor(context: Context) :
             orderTag = getColumnIndexOrThrow("order_tag").let { if (isNull(it)) null else getString(it) },
             sharpness = getColumnIndexOrThrow("sharpness").let { if (isNull(it)) null else getDouble(it) },
             duplicate = getInt(getColumnIndexOrThrow("duplicate")) == 1,
+            driveFileId = getColumnIndexOrThrow("drive_file_id").let { if (isNull(it)) null else getString(it) },
         )
     }
 
