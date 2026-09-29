@@ -22,7 +22,13 @@ object Creations {
     fun delete(context: Context, uri: Uri): Boolean = context.contentResolver.delete(uri, null, null) > 0
 
     /** Short description of what a file is, from the name the editor gave it. */
-    fun kind(name: String): String = when {
+    fun kind(fileName: String): String {
+        // Android adds " (1)" when a file with the same name already exists.
+        val name = fileName.replace(Regex(""" \(\d+\)(?=\.\w+$)"""), "")
+        return kindOf(name)
+    }
+
+    private fun kindOf(name: String): String = when {
         name.startsWith("CakeSync_reel_") -> "🎬 Reel"
         name.startsWith("CakeSync_collage_") -> "🧩 Collage"
         name.contains("_filter_") -> "🎨 " + name.substringAfter("_filter_").substringBefore('.')

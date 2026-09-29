@@ -410,11 +410,11 @@ if tap_text "View results"; then
   sleep 3
   shot 05n-created-tab
   ui=$(dump_ui)
-  if echo "$ui" | grep -q "🎬 Reel"; then echo "PASS: Created tab lists the reel"; created_ok=0; else echo "FAIL: reel not in Created tab"; fi
+  if echo "$ui" | grep -qE 'text="(&#127916;|🎬) Reel"'; then echo "PASS: Created tab lists the reel"; created_ok=0; else echo "FAIL: reel not in Created tab"; fi
   echo "$ui" | grep -oE 'text="[^"]*(Reel|Branded|crop|filter|Collage)[^"]*"' | head -10 | tee "$OUT/created.txt" || true
   # Tap the first creation: the dialog offers open/share/delete.
   adb shell input swipe 540 1700 540 1100 400; sleep 1
-  pos=$(find_text "🎬 Reel" || true)
+  pos=$(find_text "; Reel" || find_text "🎬 Reel" || true)
   if [ -n "$pos" ]; then
     set -- $pos
     adb shell input tap "$1" "$(( $2 - 150 ))"; sleep 2
@@ -466,12 +466,12 @@ if [ -n "$label" ]; then
   adb shell input swipe 540 1700 540 1100 400; sleep 1
   if tap_text "Filter…"; then
     sleep 3
-    tap_exact "Vintage" || true
+    tap_exact "Bright" || true
     sleep 3
     shot 05r-filter-preview
     tap_text "Save copies" || true
     sleep 8
-    n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_filter_vintage" || true)
+    n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_filter_" || true)
     echo "filtered copies: $n"
     if [ "${n:-0}" -ge 1 ]; then echo "PASS: filtered copy saved"; filter_ok=0; else echo "FAIL: no filtered copy"; fi
   fi

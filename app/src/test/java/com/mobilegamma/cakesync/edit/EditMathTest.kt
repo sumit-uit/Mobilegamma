@@ -107,4 +107,13 @@ class EditMathTest {
         }
         assertEquals(9, CollageTemplate.GRID_9.size)
     }
+
+    @Test
+    fun creationKindsSurviveDuplicateNames() {
+        assertEquals("🏷 Branded", Creations.kind("cake_1_branded (1).jpg"))
+        assertEquals("🎨 Warm filter", Creations.kind("cake_1_filter_warm (2).jpg"))
+        assertEquals("🎬 Reel", Creations.kind("CakeSync_reel_20260929_233348.mp4"))
+        assertEquals("🧩 Collage", Creations.kind("CakeSync_collage_20260929_233348.jpg"))
+        assertEquals("▢ 1:1 crop", Creations.kind("cake_1_1080x1080.jpg"))
+    }
 }
