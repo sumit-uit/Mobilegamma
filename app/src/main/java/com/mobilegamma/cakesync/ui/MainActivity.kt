@@ -35,6 +35,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -729,6 +731,7 @@ private fun CategoryDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: MainViewModel) {
     var showOrder by remember { mutableStateOf(false) }
@@ -741,9 +744,10 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
                 TextButton(onClick = viewModel::selectAllShown) { Text("All") }
                 TextButton(onClick = viewModel::clearSelection) { Text("Done") }
             }
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()),
+            // Wraps onto extra lines so every action is visible without sideways scrolling.
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 OutlinedButton(onClick = { viewModel.includeSelected(true) }) { Text("Include") }
                 OutlinedButton(onClick = { viewModel.includeSelected(false) }) { Text("Exclude") }
