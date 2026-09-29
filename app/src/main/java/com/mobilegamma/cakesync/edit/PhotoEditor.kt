@@ -67,7 +67,7 @@ class PhotoEditor(private val context: Context) {
                 drawColor(Color.WHITE)
                 drawBitmap(foreground, 0f, 0f, null)
             }
-            save(out, "${baseName(displayName)}_white.jpg")
+            save(brandIfEnabled(out), "${baseName(displayName)}_white.jpg")
         } finally {
             segmenter.close()
         }
@@ -108,7 +108,22 @@ class PhotoEditor(private val context: Context) {
             val dy = (shape.h - dh) / 2
             canvas.drawBitmap(source, null, Rect(dx, dy, dx + dw, dy + dh), paint)
         }
-        save(out, "${baseName(displayName)}_${shape.w}x${shape.h}.jpg")
+        save(brandIfEnabled(out), "${baseName(displayName)}_${shape.w}x${shape.h}.jpg")
+    }
+
+    /**
+     * Saves a branded copy: the brand kit's colour filter, logo and business name, plus an
+     * optional [price] label such as "₹1,200".
+     */
+    suspend fun brand(uri: Uri, displayName: String, price: String?): Uri = withContext(Dispatchers.Default) {
+        val kit = BrandKit.load(context)
+        if (kit.isEmpty && price.isNullOrBlank()) throw IOException("Set up your brand kit in Settings first")
+        save(kit.apply(load(uri), price), "${baseName(displayName)}_branded.jpg")
+    }
+
+    private fun brandIfEnabled(bitmap: Bitmap): Bitmap {
+        val kit = BrandKit.load(context)
+        return if (kit.applyToEdits && !kit.isEmpty) kit.apply(bitmap) else bitmap
     }
 
     /** Bounding box of the main food object, or the largest object found. */

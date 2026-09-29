@@ -281,6 +281,45 @@ fi
 
 scroll_top() { for i in 1 2 3 4; do adb shell input swipe 540 700 540 1900 200; sleep 0.5; done; }
 scroll_top
+
+echo "== Branding: business name in the brand kit, then brand selected photos with a price"
+brand_ok=1
+if tap_text "Settings"; then
+  sleep 2
+  adb shell input swipe 540 1700 540 900 400; sleep 1
+  if tap_text "Brand kit"; then
+    sleep 2
+    tap_text "Business name" && adb shell input text "Soni%sBakes"
+    sleep 1
+    tap_text "Save name" || true
+    sleep 1
+    shot 05i-brand-kit
+  fi
+  scroll_top
+  tap_text "Settings" || true   # collapse again
+  sleep 2
+fi
+adb shell input swipe 540 1700 540 900 400; sleep 1
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  tap_exact "All" || true
+  adb shell input swipe 540 1700 540 1100 400; sleep 1
+  if tap_text "Brand…"; then
+    sleep 2
+    tap_text "Price or text" && adb shell input text "Rs%s1200"
+    sleep 1
+    if [ -z "$(find_text "Save copies")" ]; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+    tap_text "Save copies" || true
+    sleep 10
+    branded=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_branded.jpg" || true)
+    echo "branded copies: $branded"
+    if [ "${branded:-0}" -ge 1 ]; then echo "PASS: branded copies saved"; brand_ok=0; else echo "FAIL: no branded copies"; fi
+  fi
+fi
+scroll_top
 adb shell input swipe 540 1700 540 900 400   # bring the first photos on screen
 sleep 1
 
@@ -357,6 +396,9 @@ PY
 matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
 if [ "${matches:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
+fi
+if [ "$brand_ok" -ne 0 ]; then
+  echo "FAIL: branding check"; exit 1
 fi
 if [ "$crop_ok" -ne 0 ]; then
   echo "FAIL: crop check"; exit 1

@@ -3,6 +3,7 @@ package com.mobilegamma.cakesync.ui
 import android.app.Application
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -13,6 +14,7 @@ import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
 import com.mobilegamma.cakesync.drive.DriveAuth
+import com.mobilegamma.cakesync.edit.BrandKit
 import com.mobilegamma.cakesync.edit.PhotoEditor
 import com.mobilegamma.cakesync.scan.PhotoScanner
 import com.mobilegamma.cakesync.work.SyncScheduler
@@ -63,6 +65,8 @@ data class UiState(
     val selected: Set<Long> = emptySet(),
     /** Order tags already used, offered as suggestions. */
     val orderTags: List<String> = emptyList(),
+    /** Bumped when the brand kit changes so the preview redraws. */
+    val brandVersion: Int = 0,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -207,6 +211,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Saves a copy of each selected photo cropped to [shape]. */
     fun cropSelected(shape: PhotoEditor.Shape) = editSelected("Crop ${shape.label}") { editor, photo ->
         editor.crop(photo.uri, photo.displayName, shape)
+    }
+
+    /** Saves branded copies (logo, name, filter) with an optional price label. */
+    fun brandSelected(price: String?) = editSelected("Brand") { editor, photo ->
+        editor.brand(photo.uri, photo.displayName, price)
+    }
+
+    fun brandKit(): BrandKit = BrandKit.load(getApplication())
+
+    fun saveBrandKit(kit: BrandKit) {
+        BrandKit.save(getApplication(), kit)
+        _state.update { it.copy(brandVersion = it.brandVersion + 1) }
+    }
+
+    fun setBrandLogo(uri: Uri?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                if (uri == null) BrandKit.removeLogo(getApplication()) else BrandKit.setLogo(getApplication(), uri)
+            }
+            _state.update {
+                it.copy(
+                    brandVersion = it.brandVersion + 1,
+                    message = result.exceptionOrNull()?.let { e -> "Logo: ${e.message}" } ?: it.message,
+                )
+            }
+        }
     }
 
     private fun editSelected(what: String, edit: suspend (PhotoEditor, Photo) -> Unit) {

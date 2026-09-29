@@ -91,7 +91,11 @@ import coil3.video.VideoFrameDecoder
 import com.mobilegamma.cakesync.data.Categories
 import com.mobilegamma.cakesync.data.Category
 import com.mobilegamma.cakesync.data.Photo
+import com.mobilegamma.cakesync.edit.ColorFilterPreset
+import com.mobilegamma.cakesync.edit.LogoPosition
 import com.mobilegamma.cakesync.edit.PhotoEditor
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.foundation.layout.size
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -202,7 +206,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                     onSync = viewModel::syncNow,
                 )
             }
-            state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, state.seenLabels, viewModel) } }
+            state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, state.seenLabels, state.brandVersion, viewModel) } }
             fullWidth {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -372,6 +376,7 @@ private fun SettingsCard(
     s: SettingsState,
     folders: List<PhotoScanner.Folder>?,
     seenLabels: List<String>,
+    brandVersion: Int,
     viewModel: MainViewModel,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -423,6 +428,8 @@ private fun SettingsCard(
                     onDelete = { viewModel.deleteCategory(category.id); editing = null },
                 )
             }
+
+            BrandKitSection(brandVersion, viewModel)
 
             SwitchRow("Upload automatically every day", s.dailySyncEnabled) {
                 viewModel.updateSettings { dailySyncEnabled = it }
@@ -737,6 +744,7 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
     var showOrder by remember { mutableStateOf(false) }
     var showMove by remember { mutableStateOf(false) }
     var showCrop by remember { mutableStateOf(false) }
+    var showBrand by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -755,6 +763,7 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
                 if (categories.size > 1) OutlinedButton(onClick = { showMove = true }) { Text("Category…") }
                 OutlinedButton(onClick = viewModel::whiteBackgroundForSelected) { Text("✂ White background") }
                 OutlinedButton(onClick = { showCrop = true }) { Text("▢ Crop…") }
+                OutlinedButton(onClick = { showBrand = true }) { Text("🏷 Brand…") }
             }
         }
     }
@@ -764,6 +773,30 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
             onDismiss = { showOrder = false },
             onSave = { viewModel.tagSelected(it); showOrder = false },
             onRemove = { viewModel.tagSelected(null); showOrder = false },
+        )
+    }
+    if (showBrand) {
+        var price by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showBrand = false },
+            title = { Text("Add branding") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Saves copies with your logo, business name and colour filter (set up in Settings → Brand kit). " +
+                            "Originals stay as they are.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = price, onValueChange = { price = it }, singleLine = true,
+                        label = { Text("Price or text (optional), e.g. ₹1,200") }, modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.brandSelected(price); showBrand = false }) { Text("Save copies") }
+            },
+            dismissButton = { TextButton(onClick = { showBrand = false }) { Text("Cancel") } },
         )
     }
     if (showCrop) {
@@ -839,4 +872,86 @@ private fun OrderDialog(
         confirmButton = { TextButton(enabled = tag.isNotBlank(), onClick = { onSave(tag) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun BrandKitSection(brandVersion: Int, viewModel: MainViewModel) {
+    var open by remember { mutableStateOf(false) }
+    val kit = remember(brandVersion) { viewModel.brandKit() }
+    val pickLogo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.setBrandLogo(uri)
+    }
+    Row(Modifier.fillMaxWidth().clickable { open = !open }, verticalAlignment = Alignment.CenterVertically) {
+        Text("Brand kit", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        Text(
+            if (kit.isEmpty) "not set up " + (if (open) "▲" else "▼")
+            else listOfNotNull(
+                if (kit.logo != null) "logo" else null,
+                kit.businessName.ifBlank { null },
+                kit.filter.takeIf { it != ColorFilterPreset.NONE }?.label,
+            ).joinToString(" · ") + if (open) " ▲" else " ▼",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    if (!open) return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (kit.logo != null) {
+                AsyncImage(
+                    model = coil3.request.ImageRequest.Builder(LocalContext.current)
+                        .data(kit.logo).memoryCacheKey("logo-$brandVersion").diskCacheKey("logo-$brandVersion").build(),
+                    contentDescription = "Logo",
+                    modifier = Modifier.size(56.dp),
+                )
+            }
+            OutlinedButton(onClick = {
+                pickLogo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }) { Text(if (kit.logo == null) "Choose logo" else "Change logo") }
+            if (kit.logo != null) TextButton(onClick = { viewModel.setBrandLogo(null) }) { Text("Remove") }
+        }
+        Text("Logo position", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LogoPosition.entries.forEach { p ->
+                FilterChip(
+                    selected = kit.position == p,
+                    onClick = { viewModel.saveBrandKit(kit.copy(position = p)) },
+                    label = { Text(p.label) },
+                )
+            }
+        }
+        var size by remember(brandVersion) { mutableFloatStateOf(kit.logoSize) }
+        Text("Logo size: ${(size * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = size, onValueChange = { size = it }, valueRange = 0.1f..0.4f,
+            onValueChangeFinished = { viewModel.saveBrandKit(kit.copy(logoSize = size)) },
+        )
+        var opacity by remember(brandVersion) { mutableFloatStateOf(kit.logoOpacity) }
+        Text("Logo opacity: ${(opacity * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = opacity, onValueChange = { opacity = it }, valueRange = 0.3f..1f,
+            onValueChangeFinished = { viewModel.saveBrandKit(kit.copy(logoOpacity = opacity)) },
+        )
+        var name by remember(brandVersion) { mutableStateOf(kit.businessName) }
+        OutlinedTextField(
+            value = name, onValueChange = { name = it }, singleLine = true,
+            label = { Text("Business name / handle, e.g. Soni Bakes · @sonibakes") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (name != kit.businessName) {
+            Button(onClick = { viewModel.saveBrandKit(kit.copy(businessName = name.trim())) }) { Text("Save name") }
+        }
+        Text("Colour filter", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ColorFilterPreset.entries.forEach { f ->
+                FilterChip(
+                    selected = kit.filter == f,
+                    onClick = { viewModel.saveBrandKit(kit.copy(filter = f)) },
+                    label = { Text(f.label) },
+                )
+            }
+        }
+        SwitchRow("Also brand crops and white-background copies", kit.applyToEdits) {
+            viewModel.saveBrandKit(kit.copy(applyToEdits = it))
+        }
+    }
 }
