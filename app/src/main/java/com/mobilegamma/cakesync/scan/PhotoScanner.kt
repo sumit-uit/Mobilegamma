@@ -18,6 +18,7 @@ import com.google.mlkit.vision.objects.ObjectDetector
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
+import com.mobilegamma.cakesync.data.Categories
 import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
@@ -57,8 +58,8 @@ class PhotoScanner(private val context: Context) {
 
     suspend fun scanNew(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Result =
         withContext(Dispatchers.IO) {
-            val targets = settings.labelSet()
-            val threshold = settings.threshold
+            val categoryStore = Categories(context)
+            val categories = categoryStore.all()
             val days = settings.scanDays
             val since = if (days <= 0) 0L
                 else System.currentTimeMillis() / 1000 - TimeUnit.DAYS.toSeconds(days.toLong())
@@ -113,9 +114,8 @@ class PhotoScanner(private val context: Context) {
                         )
                         return@forEachIndexed
                     }
-                    val score = result.labels.filter { it.first.lowercase() in targets }
-                        .maxOfOrNull { it.second } ?: 0f
-                    val isMatch = score >= threshold
+                    val classification = categoryStore.classify(result.labels, categories)
+                    val isMatch = classification.isMatch
                     store.insert(
                         Photo(
                             mediaId = item.id,
@@ -123,9 +123,11 @@ class PhotoScanner(private val context: Context) {
                             displayName = item.name,
                             mimeType = item.mimeType,
                             takenAtMillis = item.takenAtMillis,
-                            labels = result.labels.take(5).joinToString { "${it.first} ${(it.second * 100).toInt()}%" },
-                            score = score,
+                            // Top 10 labels are kept so categories can be changed later without a rescan.
+                            labels = result.labels.take(10).joinToString { "${it.first} ${(it.second * 100).toInt()}%" },
+                            score = classification.score,
                             isMatch = isMatch,
+                            category = classification.category?.id,
                             override = null,
                             uploadedAtMillis = null,
                             faces = result.faces,

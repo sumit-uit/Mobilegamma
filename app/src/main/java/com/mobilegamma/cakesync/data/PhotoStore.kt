@@ -24,6 +24,8 @@ data class Photo(
     val faces: Int? = null,
     val isVideo: Boolean = false,
     val durationMs: Long? = null,
+    /** Id of the matched [Category]; null when nothing matched. */
+    val category: String? = null,
 ) {
     val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
@@ -35,7 +37,7 @@ data class Photo(
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 6) {
+    SQLiteOpenHelper(context, "photos.db", null, 7) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -54,7 +56,8 @@ class PhotoStore private constructor(context: Context) :
                 drive_file_id TEXT,
                 faces INTEGER,
                 is_video INTEGER NOT NULL DEFAULT 0,
-                duration_ms INTEGER
+                duration_ms INTEGER,
+                category TEXT
             )
             """.trimIndent()
         )
@@ -67,6 +70,11 @@ class PhotoStore private constructor(context: Context) :
         if (oldVersion < 6) {
             db.execSQL("ALTER TABLE photos ADD COLUMN is_video INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE photos ADD COLUMN duration_ms INTEGER")
+        }
+        if (oldVersion < 7) {
+            // Categories: everything matched so far belongs to the first (Cake) category.
+            db.execSQL("ALTER TABLE photos ADD COLUMN category TEXT")
+            db.execSQL("UPDATE photos SET category = '${Categories.DEFAULT_ID}' WHERE is_match = 1")
         }
     }
 
@@ -92,6 +100,7 @@ class PhotoStore private constructor(context: Context) :
             photo.faces?.let { put("faces", it) }
             put("is_video", if (photo.isVideo) 1 else 0)
             photo.durationMs?.let { put("duration_ms", it) }
+            photo.category?.let { put("category", it) }
         }
         writableDatabase.insertWithOnConflict("photos", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
@@ -112,26 +121,19 @@ class PhotoStore private constructor(context: Context) :
     }
 
     /**
-     * Re-applies new label/threshold settings to already-scanned photos using their stored
-     * labels (the top 5 labels ≥30% confidence), so settings changes don't need a rescan.
+     * Re-applies category settings to already-scanned photos using their stored labels, so
+     * changing categories doesn't need a rescan.
      */
-    fun reclassify(targets: Set<String>, threshold: Float) {
+    fun reclassify(classify: (List<Pair<String, Float>>) -> Classification) {
         val db = writableDatabase
         db.beginTransaction()
         try {
             for (photo in all(limit = Int.MAX_VALUE)) {
-                val score = photo.labels.split(", ")
-                    .mapNotNull { entry ->
-                        val cut = entry.lastIndexOf(' ')
-                        if (cut <= 0) return@mapNotNull null
-                        val name = entry.substring(0, cut).lowercase()
-                        val pct = entry.substring(cut + 1).removeSuffix("%").toIntOrNull()
-                        if (name in targets && pct != null) pct / 100f else null
-                    }
-                    .maxOrNull() ?: 0f
+                val result = classify(parseLabels(photo.labels))
                 val values = ContentValues().apply {
-                    put("score", score)
-                    put("is_match", if (score >= threshold) 1 else 0)
+                    put("score", result.score)
+                    put("is_match", if (result.isMatch) 1 else 0)
+                    if (result.category == null) putNull("category") else put("category", result.category.id)
                 }
                 db.update("photos", values, "media_id = ?", arrayOf(photo.mediaId.toString()))
             }
@@ -140,6 +142,12 @@ class PhotoStore private constructor(context: Context) :
             db.endTransaction()
         }
     }
+
+    /** Label names seen across scanned photos, most frequent first (for category suggestions). */
+    fun seenLabels(limit: Int = 40): List<String> =
+        all(limit = 2000).flatMap { parseLabels(it.labels).map { l -> l.first } }
+            .groupingBy { it }.eachCount()
+            .entries.sortedByDescending { it.value }.take(limit).map { it.key }
 
     fun markUploaded(mediaId: Long, driveFileId: String) {
         val values = ContentValues().apply {
@@ -190,11 +198,21 @@ class PhotoStore private constructor(context: Context) :
             faces = if (isNull(facesIdx)) null else getInt(facesIdx),
             isVideo = getInt(getColumnIndexOrThrow("is_video")) == 1,
             durationMs = getColumnIndexOrThrow("duration_ms").let { if (isNull(it)) null else getLong(it) },
+            category = getColumnIndexOrThrow("category").let { if (isNull(it)) null else getString(it) },
         )
     }
 
     companion object {
         @Volatile private var instance: PhotoStore? = null
+
+        /** Parses the stored "Cake 93%, Food 88%" label list back into (name, confidence). */
+        fun parseLabels(stored: String): List<Pair<String, Float>> =
+            stored.split(", ").mapNotNull { entry ->
+                val cut = entry.lastIndexOf(' ')
+                if (cut <= 0) return@mapNotNull null
+                val pct = entry.substring(cut + 1).removeSuffix("%").toIntOrNull() ?: return@mapNotNull null
+                entry.substring(0, cut) to pct / 100f
+            }
 
         fun get(context: Context): PhotoStore =
             instance ?: synchronized(this) {

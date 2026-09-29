@@ -16,6 +16,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.mobilegamma.cakesync.R
+import com.mobilegamma.cakesync.data.Categories
+import com.mobilegamma.cakesync.data.Category
 import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
 import com.mobilegamma.cakesync.drive.DriveAuth
@@ -66,7 +68,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val resolver = applicationContext.contentResolver
         var uploaded = 0
         try {
-            val rootId = ensureRootFolder(drive)
+            val categories = Categories(applicationContext)
+            val defaultCategory = categories.all().first()
+            val rootFolders = mutableMapOf<String, String>()
             val dayFolders = mutableMapOf<String, String>()
             for ((index, photo) in pending.withIndex()) {
                 val size = runCatching { resolver.openAssetFileDescriptor(photo.uri, "r")?.use { it.length } }
@@ -76,8 +80,12 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     continue
                 }
                 runCatching { setForeground(progressInfo("Uploading ${index + 1} of ${pending.size}: ${photo.displayName}")) }
+                // <category folder>/<yyyy-MM-dd>/; photos included by hand without a category go
+                // to the first category.
+                val category = categories.byId(photo.category) ?: defaultCategory
+                val rootId = rootFolders.getOrPut(category.id) { ensureRootFolder(drive, category) }
                 val day = dayFormat.format(Date(photo.takenAtMillis))
-                val folderId = dayFolders.getOrPut(day) { drive.findOrCreateFolder(day, rootId) }
+                val folderId = dayFolders.getOrPut("${category.id}/$day") { drive.findOrCreateFolder(day, rootId) }
                 val fileId = drive.uploadFile(photo.displayName, photo.mimeType, folderId, size) {
                     resolver.openInputStream(photo.uri) ?: throw IOException("Cannot open ${photo.uri}")
                 }
@@ -97,10 +105,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         return finish("Uploaded $uploaded file(s) to Drive", success = true)
     }
 
-    private suspend fun ensureRootFolder(drive: DriveClient): String {
-        settings.driveRootFolderId?.let { id -> if (drive.folderExists(id)) return id }
-        return drive.findOrCreateFolder(settings.driveFolderName, parentId = null)
-            .also { settings.driveRootFolderId = it }
+    private suspend fun ensureRootFolder(drive: DriveClient, category: Category): String {
+        settings.rootFolderId(category)?.let { id -> if (drive.folderExists(id)) return id }
+        return drive.findOrCreateFolder(category.driveFolder, parentId = null)
+            .also { settings.setRootFolderId(category, it) }
     }
 
     private fun retryWith(message: String): Result {

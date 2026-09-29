@@ -180,6 +180,37 @@ fi
 adb shell input swipe 540 700 540 1800 300 || true
 sleep 1
 
+echo "== Categories: add a 'Beach' category through the UI"
+category_ok=1
+if tap_text "+ Add category"; then
+  sleep 2
+  tap_text "Name, e.g. Cupcakes" && adb shell input text "Beach"
+  sleep 1
+  tap_text "Labels to match" && adb shell input text "Beach"
+  sleep 1
+  # hide the keyboard only if it covers the Save button (BACK would otherwise close the dialog)
+  if [ -z "$(find_text "Save")" ]; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+  shot 05c-new-category
+  if tap_text "Save"; then
+    sleep 6
+    adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos-cat.db" || true
+    adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos-cat.db-wal" 2>/dev/null || true
+    if python3 - "$OUT/photos-cat.db" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+rows = db.execute("SELECT display_name, category, is_match FROM photos WHERE display_name LIKE 'other_%'").fetchall()
+beach = [r for r in rows if r[1] not in (None, 'default') and r[2] == 1]
+print("other_* rows:", rows)
+sys.exit(0 if beach else 1)
+PY
+    then echo "PASS: beach photos moved into the new category"; category_ok=0
+    else echo "FAIL: no photo was matched to the new category"; fi
+  fi
+  shot 05d-after-category
+fi
+adb shell input swipe 540 700 540 1800 300 || true
+sleep 1
+
 echo "== Connect Drive (no Google account on the emulator: expect an error message, not a crash)"
 adb shell input keyevent KEYCODE_MOVE_HOME
 tap_text "Connect" || true
@@ -227,6 +258,9 @@ PY
 matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
 if [ "${matches:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
+fi
+if [ "$category_ok" -ne 0 ]; then
+  echo "FAIL: categories check"; exit 1
 fi
 if [ "$people_ok" -ne 0 ]; then
   echo "FAIL: people/topper check"; exit 1

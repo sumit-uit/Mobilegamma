@@ -65,6 +65,14 @@ class Settings(context: Context) {
         get() = prefs.getStringSet(KEY_FOLDERS, emptySet())?.toSet() ?: emptySet()
         set(value) = prefs.edit { putStringSet(KEY_FOLDERS, value) }
 
+    /** Cached Drive id of a category's top-level folder (reset when its folder name changes). */
+    fun rootFolderId(category: Category): String? =
+        prefs.getString("drive_root_${category.id}_${category.driveFolder}", null)
+            ?: if (category.id == Categories.DEFAULT_ID && category.driveFolder == driveFolderName) driveRootFolderId else null
+
+    fun setRootFolderId(category: Category, id: String) =
+        prefs.edit { putString("drive_root_${category.id}_${category.driveFolder}", id) }
+
     var driveRootFolderId: String?
         get() = prefs.getString(KEY_ROOT_FOLDER_ID, null)
         set(value) = prefs.edit { putString(KEY_ROOT_FOLDER_ID, value) }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import java.security.MessageDigest
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -82,6 +83,8 @@ import coil3.ImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.video.VideoFrameDecoder
+import com.mobilegamma.cakesync.data.Categories
+import com.mobilegamma.cakesync.data.Category
 import com.mobilegamma.cakesync.data.Photo
 
 class MainActivity : ComponentActivity() {
@@ -193,7 +196,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                     onSync = viewModel::syncNow,
                 )
             }
-            state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, viewModel) } }
+            state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, state.seenLabels, viewModel) } }
             fullWidth {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -215,6 +218,26 @@ private fun MainScreen(viewModel: MainViewModel) {
                     }
                 }
             }
+            val categoryList = state.settings?.categories.orEmpty()
+            if (categoryList.size > 1) fullWidth {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    FilterChip(
+                        selected = state.categoryFilter == null,
+                        onClick = { viewModel.setCategoryFilter(null) },
+                        label = { Text("All categories") },
+                    )
+                    categoryList.forEach { category ->
+                        FilterChip(
+                            selected = state.categoryFilter == category.id,
+                            onClick = { viewModel.setCategoryFilter(category.id) },
+                            label = { Text(category.name) },
+                        )
+                    }
+                }
+            }
             fullWidth {
                 Text(
                     "Tap a photo to include or exclude it. ✓ = already in Drive, 👤 = skipped (person in photo).",
@@ -230,7 +253,8 @@ private fun MainScreen(viewModel: MainViewModel) {
                 )
             }
             items(state.photos, key = { it.mediaId }) { photo ->
-                PhotoTile(photo, state.settings?.excludePeople ?: true, onClick = { viewModel.toggle(photo) })
+                val categoryName = if (categoryList.size > 1) categoryList.firstOrNull { it.id == photo.category }?.name else null
+                PhotoTile(photo, state.settings?.excludePeople ?: true, categoryName, onClick = { viewModel.toggle(photo) })
             }
         }
     }
@@ -325,7 +349,12 @@ private fun StatusRow(label: String, ok: Boolean, action: String, onAction: () -
 }
 
 @Composable
-private fun SettingsCard(s: SettingsState, folders: List<PhotoScanner.Folder>?, viewModel: MainViewModel) {
+private fun SettingsCard(
+    s: SettingsState,
+    folders: List<PhotoScanner.Folder>?,
+    seenLabels: List<String>,
+    viewModel: MainViewModel,
+) {
     var expanded by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -338,49 +367,43 @@ private fun SettingsCard(s: SettingsState, folders: List<PhotoScanner.Folder>?, 
             }
             if (!expanded) {
                 Text(
-                    "Looking for: ${s.targetLabels} · Scanning: ${folderSummary(s.scanFolders)}, " +
-                        "${scanWindowLabel(s.scanDays)} · Drive folder: ${s.driveFolderName} · " +
+                    "Categories: ${s.categories.joinToString { it.name }} · Scanning: ${folderSummary(s.scanFolders)}, " +
+                        "${scanWindowLabel(s.scanDays)} · " +
                         if (s.dailySyncEnabled) "daily at %02d:00".format(s.uploadHour) else "daily upload off",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 return@Column
             }
 
-            var labels by remember(s.targetLabels) { mutableStateOf(s.targetLabels) }
-            OutlinedTextField(
-                value = labels,
-                onValueChange = { labels = it },
-                label = { Text("Labels to match (comma-separated)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            var folder by remember(s.driveFolderName) { mutableStateOf(s.driveFolderName) }
-            OutlinedTextField(
-                value = folder,
-                onValueChange = { folder = it },
-                label = { Text("Drive folder") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (labels != s.targetLabels || folder != s.driveFolderName) {
-                Button(
-                    onClick = {
-                        viewModel.updateSettings {
-                            targetLabels = labels
-                            if (folder.isNotBlank() && folder != driveFolderName) driveFolderName = folder.trim()
-                        }
-                    },
-                ) { Text("Save") }
+            Text("Categories", style = MaterialTheme.typography.titleSmall)
+            var editing by remember { mutableStateOf<Category?>(null) }
+            s.categories.forEach { category ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(category.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Labels: ${category.labels} · ${(category.threshold * 100).toInt()}% · Drive: ${category.driveFolder}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    TextButton(onClick = { editing = category; viewModel.loadSeenLabels() }) { Text("Edit") }
+                }
             }
-
-            var threshold by remember(s.threshold) { mutableFloatStateOf(s.threshold) }
-            Text("Minimum confidence: ${(threshold * 100).toInt()}%")
-            Slider(
-                value = threshold,
-                onValueChange = { threshold = it },
-                onValueChangeFinished = { viewModel.updateSettings { this.threshold = threshold } },
-                valueRange = 0.3f..0.95f,
-            )
+            TextButton(onClick = {
+                editing = Category(Categories.newId(), "", "", 0.6f, "")
+                viewModel.loadSeenLabels()
+            }) { Text("+ Add category") }
+            editing?.let { category ->
+                CategoryDialog(
+                    initial = category,
+                    isNew = s.categories.none { it.id == category.id },
+                    canDelete = s.categories.size > 1,
+                    suggestions = seenLabels,
+                    onDismiss = { editing = null },
+                    onSave = { viewModel.saveCategory(it); editing = null },
+                    onDelete = { viewModel.deleteCategory(category.id); editing = null },
+                )
+            }
 
             SwitchRow("Upload automatically every day", s.dailySyncEnabled) {
                 viewModel.updateSettings { dailySyncEnabled = it }
@@ -447,7 +470,7 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun PhotoTile(photo: Photo, excludePeople: Boolean, onClick: () -> Unit) {
+private fun PhotoTile(photo: Photo, excludePeople: Boolean, categoryName: String?, onClick: () -> Unit) {
     val included = photo.included(excludePeople)
     Column(Modifier.clickable(onClick = onClick)) {
         Box {
@@ -493,7 +516,8 @@ private fun PhotoTile(photo: Photo, excludePeople: Boolean, onClick: () -> Unit)
             }
         }
         Text(
-            (if (photo.hasPeople) "👤 ${photo.faces} · " else "") + photo.labels.ifEmpty { "no labels" },
+            (categoryName?.let { "$it · " } ?: "") +
+                (if (photo.hasPeople) "👤 ${photo.faces} · " else "") + photo.labels.ifEmpty { "no labels" },
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -578,4 +602,81 @@ private fun FolderPickerDialog(
 private fun formatDuration(ms: Long): String {
     val totalSec = ms / 1000
     return "%d:%02d".format(totalSec / 60, totalSec % 60)
+}
+
+@Composable
+private fun CategoryDialog(
+    initial: Category,
+    isNew: Boolean,
+    canDelete: Boolean,
+    suggestions: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (Category) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initial.name) }
+    var labels by remember { mutableStateOf(initial.labels) }
+    var folder by remember { mutableStateOf(initial.driveFolder) }
+    var threshold by remember { mutableFloatStateOf(initial.threshold) }
+    val chosen = labels.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isNew) "New category" else "Edit ${initial.name}") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it }, singleLine = true,
+                    label = { Text("Name, e.g. Cupcakes") }, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = labels, onValueChange = { labels = it },
+                    label = { Text("Labels to match (comma-separated)") }, modifier = Modifier.fillMaxWidth(),
+                )
+                if (suggestions.isNotEmpty()) {
+                    Text("Labels seen in your photos (tap to add):", style = MaterialTheme.typography.labelSmall)
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        suggestions.filter { it !in chosen }.take(25).forEach { label ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { labels = (chosen + label).joinToString(", ") },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+                Text("Minimum confidence: ${(threshold * 100).toInt()}%")
+                Slider(value = threshold, onValueChange = { threshold = it }, valueRange = 0.3f..0.95f)
+                OutlinedTextField(
+                    value = folder, onValueChange = { folder = it }, singleLine = true,
+                    label = { Text("Drive folder") }, placeholder = { Text(name.ifBlank { "Folder name" }) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (!isNew && canDelete) {
+                    TextButton(onClick = onDelete) { Text("Delete this category") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank() && chosen.isNotEmpty(),
+                onClick = {
+                    onSave(
+                        initial.copy(
+                            name = name.trim(),
+                            labels = chosen.joinToString(", "),
+                            threshold = threshold,
+                            driveFolder = folder.trim().ifBlank { name.trim() },
+                        )
+                    )
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

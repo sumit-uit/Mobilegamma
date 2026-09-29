@@ -7,6 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.mobilegamma.cakesync.data.Categories
+import com.mobilegamma.cakesync.data.Category
 import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
@@ -23,9 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class SettingsState(
-    val targetLabels: String,
-    val threshold: Float,
-    val driveFolderName: String,
+    val categories: List<Category>,
     val uploadHour: Int,
     val wifiOnly: Boolean,
     val dailySyncEnabled: Boolean,
@@ -53,10 +53,15 @@ data class UiState(
     val settings: SettingsState? = null,
     /** Photo folders on the device, loaded when the folder picker opens. */
     val folders: List<PhotoScanner.Folder>? = null,
+    /** Grid filter: a category id, or null for all categories. */
+    val categoryFilter: String? = null,
+    /** Labels seen in scanned photos, offered as suggestions when editing a category. */
+    val seenLabels: List<String> = emptyList(),
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = Settings(app)
+    private val categories = Categories(app)
     private val store = PhotoStore.get(app)
     private val auth = DriveAuth(app)
 
@@ -80,12 +85,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         viewModelScope.launch {
             val tab = _state.value.tab
+            val filter = _state.value.categoryFilter
             val (photos, pending) = withContext(Dispatchers.IO) {
                 when (tab) {
                     GridTab.MATCHES -> store.matches()
                     GridTab.VIDEOS -> store.matches().filter { it.isVideo }
                     GridTab.ALL -> store.all()
-                } to
+                }.filter { filter == null || it.category == filter } to
                     store.pendingUploads(settings.requireApproval, settings.excludePeople).size
             }
             _state.update {
@@ -105,6 +111,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setTab(tab: GridTab) {
         _state.update { it.copy(tab = tab) }
         refresh()
+    }
+
+    fun setCategoryFilter(id: String?) {
+        _state.update { it.copy(categoryFilter = id) }
+        refresh()
+    }
+
+    fun loadSeenLabels() {
+        viewModelScope.launch {
+            val labels = withContext(Dispatchers.IO) { store.seenLabels() }
+            _state.update { it.copy(seenLabels = labels) }
+        }
+    }
+
+    /** Adds or edits a category, then re-sorts already-scanned photos with the new setup. */
+    fun saveCategory(category: Category) = changeCategories { categories.upsert(category) }
+
+    fun deleteCategory(id: String) = changeCategories {
+        categories.delete(id)
+        if (_state.value.categoryFilter == id) _state.update { it.copy(categoryFilter = null) }
+    }
+
+    private fun changeCategories(change: () -> Unit) {
+        change()
+        _state.update { it.copy(settings = readSettings()) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = categories.all()
+            store.reclassify { labels -> categories.classify(labels, current) }
+            refresh()
+        }
     }
 
     fun scanNow() {
@@ -178,12 +214,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val before = readSettings()
         settings.transform()
         val after = readSettings()
-        if (before.targetLabels != after.targetLabels || before.threshold != after.threshold) {
-            viewModelScope.launch(Dispatchers.IO) {
-                store.reclassify(settings.labelSet(), settings.threshold)
-                refresh()
-            }
-        }
         if (before.uploadHour != after.uploadHour || before.wifiOnly != after.wifiOnly ||
             before.dailySyncEnabled != after.dailySyncEnabled
         ) {
@@ -194,9 +224,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun readSettings() = SettingsState(
-        targetLabels = settings.targetLabels,
-        threshold = settings.threshold,
-        driveFolderName = settings.driveFolderName,
+        categories = categories.all(),
         uploadHour = settings.uploadHour,
         wifiOnly = settings.wifiOnly,
         dailySyncEnabled = settings.dailySyncEnabled,
