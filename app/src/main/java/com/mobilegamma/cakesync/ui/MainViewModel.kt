@@ -36,11 +36,14 @@ data class SettingsState(
     val scanFolders: Set<String>,
 )
 
+/** Which photos the review grid shows. */
+enum class GridTab { MATCHES, VIDEOS, ALL }
+
 data class UiState(
     val hasPhotoPermission: Boolean = false,
     val hasVideoPermission: Boolean = false,
     val driveConnected: Boolean = false,
-    val showAll: Boolean = false,
+    val tab: GridTab = GridTab.MATCHES,
     val photos: List<Photo> = emptyList(),
     val pendingCount: Int = 0,
     val scanProgress: Pair<Int, Int>? = null,
@@ -76,9 +79,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refresh() {
         viewModelScope.launch {
-            val showAll = _state.value.showAll
+            val tab = _state.value.tab
             val (photos, pending) = withContext(Dispatchers.IO) {
-                (if (showAll) store.all() else store.matches()) to
+                when (tab) {
+                    GridTab.MATCHES -> store.matches()
+                    GridTab.VIDEOS -> store.matches().filter { it.isVideo }
+                    GridTab.ALL -> store.all()
+                } to
                     store.pendingUploads(settings.requireApproval, settings.excludePeople).size
             }
             _state.update {
@@ -95,8 +102,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setShowAll(showAll: Boolean) {
-        _state.update { it.copy(showAll = showAll) }
+    fun setTab(tab: GridTab) {
+        _state.update { it.copy(tab = tab) }
         refresh()
     }
 

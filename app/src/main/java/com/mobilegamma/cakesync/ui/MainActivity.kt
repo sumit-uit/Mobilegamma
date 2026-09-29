@@ -195,24 +195,38 @@ private fun MainScreen(viewModel: MainViewModel) {
             }
             state.settings?.let { s -> fullWidth { SettingsCard(s, state.folders, viewModel) } }
             fullWidth {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                    FilterChip(
-                        selected = !state.showAll,
-                        onClick = { viewModel.setShowAll(false) },
-                        label = { Text(if (state.showAll) "Matches" else "Matches (${state.photos.size})") },
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    FilterChip(
-                        selected = state.showAll,
-                        onClick = { viewModel.setShowAll(true) },
-                        label = { Text("All scanned") },
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()),
+                ) {
+                    listOf(
+                        GridTab.MATCHES to "Matches",
+                        GridTab.VIDEOS to "Videos",
+                        GridTab.ALL to "All scanned",
+                    ).forEachIndexed { i, (tab, name) ->
+                        if (i > 0) Spacer(Modifier.width(8.dp))
+                        val selected = state.tab == tab
+                        FilterChip(
+                            selected = selected,
+                            onClick = { viewModel.setTab(tab) },
+                            // Count shown for the open tab (All scanned is capped, so no count there).
+                            label = { Text(if (selected && tab != GridTab.ALL) "$name (${state.photos.size})" else name) },
+                        )
+                    }
                 }
             }
             fullWidth {
                 Text(
                     "Tap a photo to include or exclude it. ✓ = already in Drive, 👤 = skipped (person in photo).",
                     style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (state.tab == GridTab.VIDEOS && state.photos.isEmpty()) fullWidth {
+                Text(
+                    "No matched videos yet. Check Video access above, then look under All scanned: " +
+                        "videos show ▶ and can be tapped to include them.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 16.dp),
                 )
             }
             items(state.photos, key = { it.mediaId }) { photo ->

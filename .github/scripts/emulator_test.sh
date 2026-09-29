@@ -144,6 +144,11 @@ tap_text "All scanned"
 sleep 3
 shot 03-all-scanned
 
+echo "== Videos tab"
+tap_text "Videos" || true
+sleep 3
+shot 03b-videos-tab
+
 echo "== Toggle a photo (exclude/include)"
 tap_text "Matches" || true
 sleep 2
