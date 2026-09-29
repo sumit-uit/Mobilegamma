@@ -42,10 +42,13 @@ class PhotoScanner(private val context: Context) {
         val videosNew: Int = 0,
         /** Items that could not be read or analysed (kept, visible under All scanned). */
         val failed: Int = 0,
+        /** Near-identical shots set aside in favour of a sharper one. */
+        val duplicates: Int = 0,
     ) {
         fun summary(): String = buildString {
             append("Scanned $scanned new item(s), $matched match(es)")
             append(" · videos visible: $videosVisible, in period/folders: $videosInScope, new: $videosNew")
+            if (duplicates > 0) append(" · $duplicates near-duplicate shot(s) set aside")
             if (failed > 0) append(" · $failed could not be read (see All scanned)")
         }
     }
@@ -93,7 +96,9 @@ class PhotoScanner(private val context: Context) {
             )
             // Photos scanned by older versions haven't been face-checked yet.
             val backfill = store.missingFaceCheck()
-            val total = candidates.size + backfill.size
+            // Photos scanned before best-shot picking existed haven't been measured yet.
+            val qualityBackfill = store.missingQuality().filter { it.mediaId !in candidates.map { c -> c.id }.toSet() }
+            val total = candidates.size + backfill.size + qualityBackfill.size
             var scanned = 0
             var matched = 0
             var failed = 0
@@ -135,6 +140,9 @@ class PhotoScanner(private val context: Context) {
                             durationMs = item.durationMs,
                         )
                     )
+                    if (result.sharpness != null && result.hash != null) {
+                        store.setQuality(item.id, result.sharpness, result.hash)
+                    }
                     scanned++
                     if (isMatch) matched++
                 }
@@ -143,6 +151,12 @@ class PhotoScanner(private val context: Context) {
                     val faces = countPeople(faceDetector, objectDetector, photo.uri, photo.isVideo)
                         ?: return@forEachIndexed
                     store.setFaces(photo.mediaId, faces)
+                }
+                qualityBackfill.forEachIndexed { index, photo ->
+                    onProgress(candidates.size + backfill.size + index, total)
+                    runCatching { frames(photo.uri, false).first() }
+                        .onSuccess { store.setQuality(photo.mediaId, Quality.sharpness(it), Quality.dHash(it)) }
+                        .onFailure { Log.w(TAG, "Could not measure ${photo.uri}", it) }
                 }
                 onProgress(total, total)
             } finally {
@@ -157,10 +171,17 @@ class PhotoScanner(private val context: Context) {
                 videosInScope = videosInScope.size,
                 videosNew = candidates.count { it.isVideo },
                 failed = failed,
+                duplicates = store.markDuplicates(),
             )
         }
 
-    private class Analysis(val labels: List<Pair<String, Float>>, val faces: Int?)
+    private class Analysis(
+        val labels: List<Pair<String, Float>>,
+        val faces: Int?,
+        /** Photos only: sharpness and difference hash for best-shot picking. */
+        val sharpness: Double? = null,
+        val hash: Long? = null,
+    )
 
     /**
      * Labels and face-checks a photo, or several frames of a video. For a video the
@@ -185,7 +206,13 @@ class PhotoScanner(private val context: Context) {
                 .onSuccess { people = maxOf(people ?: 0, it) }
                 .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
         }
-        Analysis(best.toList().sortedByDescending { it.second }, people)
+        val photo = if (isVideo) null else frames.first()
+        Analysis(
+            labels = best.toList().sortedByDescending { it.second },
+            faces = people,
+            sharpness = photo?.let { runCatching { Quality.sharpness(it) }.getOrNull() },
+            hash = photo?.let { runCatching { Quality.dHash(it) }.getOrNull() },
+        )
     } catch (e: Exception) {
         Log.w(TAG, "Could not analyse $uri", e)
         null

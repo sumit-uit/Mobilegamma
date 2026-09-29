@@ -40,6 +40,22 @@ for m in re.finditer(r"<node [^>]*>", xml):
 ' "$1"
 }
 
+# Taps the first node whose text is exactly $1.
+tap_exact() {
+  local pos
+  pos=$(dump_ui | python3 -c '
+import re, sys
+needle = sys.argv[1]
+for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
+    node = m.group(0)
+    t = re.search(r" text=\"([^\"]*)\"", node)
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
+    if t and b and t.group(1) == needle:
+        x1, y1, x2, y2 = map(int, b.groups()); print((x1 + x2) // 2, (y1 + y2) // 2); break
+' "$1")
+  [ -n "$pos" ] && adb shell input tap $pos
+}
+
 tap_text() {
   local pos
   pos=$(find_text "$1")
@@ -240,6 +256,40 @@ print('tagged photos:', n); sys.exit(0 if n>0 else 1)"; then echo "PASS: order t
   fi
 fi
 
+echo "== Crop: select a photo, save a 1:1 Instagram copy"
+crop_ok=1
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  tap_exact "All" || true   # select every shown item; videos are skipped by the editor
+  sleep 1
+  if tap_text "Crop…"; then
+    sleep 2
+    tap_text "1:1 Instagram post" || true
+    sleep 8
+    shot 05g-after-crop
+    squares=$(adb shell content query --uri content://media/external/images/media \
+      --projection _display_name:width:height --where "relative_path LIKE 'Pictures/CakeSync%'" | tee "$OUT/edited.txt" | grep -c "width=1080, height=1080" || true)
+    cat "$OUT/edited.txt"
+    if [ "${squares:-0}" -ge 1 ]; then echo "PASS: 1:1 crop saved"; crop_ok=0; else echo "FAIL: no 1:1 crop found"; fi
+  fi
+fi
+
+echo "== White background (needs the Play services model; reported, not required)"
+label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$label" ]; then
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+  tap_text "White background" || true
+  sleep 15
+  shot 05h-after-white-background
+  dump_ui | grep -oE 'text="White background:[^"]*"' | tee "$OUT/white_background.txt" || true
+fi
+check_no_crash
+
 echo "== Connect Drive (no Google account on the emulator: expect an error message, not a crash)"
 adb shell input keyevent KEYCODE_MOVE_HOME
 tap_text "Connect" || true
@@ -271,6 +321,12 @@ def check(name, want_people, blocking=True):
     print(f"{verdict} {name}: faces={faces} (want {'people' if want_people else 'no people'})")
     failed |= blocking and not ok
 check("zz_cake_with_person.jpg", True)
+# best shot: the blurry copy of a burst must be set aside, the sharp one kept
+dup = dict(db.execute("SELECT display_name, duplicate FROM photos WHERE display_name LIKE 'zz_burst_%'").fetchall())
+if dup.get("zz_burst_blurry.jpg") == 1 and dup.get("zz_burst_sharp.jpg") == 0:
+    print("PASS best shot: blurry burst photo set aside, sharp one kept")
+else:
+    print(f"FAIL best shot: {dup}"); failed = True
 # videos: the cake video must be found, the other one must not
 for name, want in (("zz_cake_video.mp4", True), ("zz_other_video.mp4", False)):
     if name not in videos:
@@ -287,6 +343,9 @@ PY
 matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
 if [ "${matches:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
+fi
+if [ "$crop_ok" -ne 0 ]; then
+  echo "FAIL: crop check"; exit 1
 fi
 if [ "$order_ok" -ne 0 ]; then
   echo "FAIL: orders check"; exit 1

@@ -89,6 +89,7 @@ import coil3.video.VideoFrameDecoder
 import com.mobilegamma.cakesync.data.Categories
 import com.mobilegamma.cakesync.data.Category
 import com.mobilegamma.cakesync.data.Photo
+import com.mobilegamma.cakesync.edit.PhotoEditor
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -244,7 +245,7 @@ private fun MainScreen(viewModel: MainViewModel) {
             fullWidth {
                 Text(
                     "Tap a photo to include or exclude it; long-press to select several. " +
-                        "✓ = already in Drive, 👤 = skipped (person in photo), 📦 = order.",
+                        "✓ = already in Drive, 👤 = skipped (person in photo), ≈ = near-duplicate of a sharper shot, 📦 = order.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -265,6 +266,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                 PhotoTile(
                     photo = photo,
                     excludePeople = state.settings?.excludePeople ?: true,
+                    skipDuplicates = state.settings?.skipDuplicates ?: true,
                     categoryName = categoryName,
                     selected = photo.mediaId in state.selected,
                     onClick = { if (selecting) viewModel.toggleSelected(photo) else viewModel.toggle(photo) },
@@ -439,6 +441,9 @@ private fun SettingsCard(
             SwitchRow("Skip photos with people (face detection)", s.excludePeople) {
                 viewModel.updateSettings { excludePeople = it }
             }
+            SwitchRow("Keep only the best shot (skip near-duplicates)", s.skipDuplicates) {
+                viewModel.updateSettings { skipDuplicates = it }
+            }
             SwitchRow("Include videos", s.includeVideos) {
                 viewModel.updateSettings { includeVideos = it }
             }
@@ -489,12 +494,13 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 private fun PhotoTile(
     photo: Photo,
     excludePeople: Boolean,
+    skipDuplicates: Boolean,
     categoryName: String?,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
-    val included = photo.included(excludePeople)
+    val included = photo.included(excludePeople, skipDuplicates)
     Column(
         Modifier
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -517,6 +523,7 @@ private fun PhotoTile(
             val badge = when {
                 photo.uploaded -> "✓"
                 !included && photo.override == null && photo.hasPeople -> "👤"
+                !included && photo.override == null && photo.duplicate -> "≈"
                 !included -> "✕"
                 photo.override == true -> "＋"
                 else -> null
@@ -726,6 +733,7 @@ private fun CategoryDialog(
 private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: MainViewModel) {
     var showOrder by remember { mutableStateOf(false) }
     var showMove by remember { mutableStateOf(false) }
+    var showCrop by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -741,6 +749,8 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
                 OutlinedButton(onClick = { viewModel.includeSelected(false) }) { Text("Exclude") }
                 OutlinedButton(onClick = { showOrder = true; viewModel.loadOrderTags() }) { Text("📦 Order…") }
                 if (categories.size > 1) OutlinedButton(onClick = { showMove = true }) { Text("Category…") }
+                OutlinedButton(onClick = viewModel::whiteBackgroundForSelected) { Text("✂ White background") }
+                OutlinedButton(onClick = { showCrop = true }) { Text("▢ Crop…") }
             }
         }
     }
@@ -750,6 +760,24 @@ private fun SelectionBar(state: UiState, categories: List<Category>, viewModel: 
             onDismiss = { showOrder = false },
             onSave = { viewModel.tagSelected(it); showOrder = false },
             onRemove = { viewModel.tagSelected(null); showOrder = false },
+        )
+    }
+    if (showCrop) {
+        AlertDialog(
+            onDismissRequest = { showCrop = false },
+            title = { Text("Crop for social media") },
+            text = {
+                Column {
+                    Text(
+                        "Saves cropped copies to Pictures/CakeSync, centred on the cake. Originals stay as they are.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    PhotoEditor.Shape.entries.forEach { shape ->
+                        TextButton(onClick = { viewModel.cropSelected(shape); showCrop = false }) { Text(shape.label) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showCrop = false }) { Text("Cancel") } },
         )
     }
     if (showMove) {

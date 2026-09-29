@@ -48,6 +48,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_EXCLUDE_PEOPLE, true)
         set(value) = prefs.edit { putBoolean(KEY_EXCLUDE_PEOPLE, value) }
 
+    /** Upload only the sharpest of several near-identical shots taken moments apart. */
+    var skipDuplicates: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_DUPLICATES, true)
+        set(value) = prefs.edit { putBoolean(KEY_SKIP_DUPLICATES, value) }
+
     /** Also scan and upload videos (cake detection runs on frames from each video). */
     var includeVideos: Boolean
         get() = prefs.getBoolean(KEY_VIDEOS, true)
@@ -99,6 +104,7 @@ class Settings(context: Context) {
         const val KEY_SCAN_DAYS = "scan_days"
         const val KEY_EXCLUDE_PEOPLE = "exclude_people"
         const val KEY_VIDEOS = "include_videos"
+        const val KEY_SKIP_DUPLICATES = "skip_duplicates"
         const val KEY_FOLDERS = "scan_folders"
         const val KEY_ROOT_FOLDER_ID = "drive_root_folder_id"
         const val KEY_CONNECTED = "drive_connected"

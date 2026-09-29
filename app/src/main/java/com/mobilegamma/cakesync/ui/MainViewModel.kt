@@ -13,6 +13,7 @@ import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
 import com.mobilegamma.cakesync.drive.DriveAuth
+import com.mobilegamma.cakesync.edit.PhotoEditor
 import com.mobilegamma.cakesync.scan.PhotoScanner
 import com.mobilegamma.cakesync.work.SyncScheduler
 import com.mobilegamma.cakesync.work.SyncWorker
@@ -32,6 +33,7 @@ data class SettingsState(
     val requireApproval: Boolean,
     val excludePeople: Boolean,
     val includeVideos: Boolean,
+    val skipDuplicates: Boolean,
     val scanDays: Int,
     val scanFolders: Set<String>,
 )
@@ -96,7 +98,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     GridTab.VIDEOS -> store.matches().filter { it.isVideo }
                     GridTab.ALL -> store.all()
                 }.filter { filter == null || it.category == filter } to
-                    store.pendingUploads(settings.requireApproval, settings.excludePeople).size
+                    store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
             }
             _state.update {
                 it.copy(
@@ -197,6 +199,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun moveSelectedTo(categoryId: String) = onSelected { store.setCategoryManually(it, categoryId) }
 
+    /** Background removal: saves a white-background copy of each selected photo. */
+    fun whiteBackgroundForSelected() = editSelected("White background") { editor, photo ->
+        editor.removeBackground(photo.uri, photo.displayName)
+    }
+
+    /** Saves a copy of each selected photo cropped to [shape]. */
+    fun cropSelected(shape: PhotoEditor.Shape) = editSelected("Crop ${shape.label}") { editor, photo ->
+        editor.crop(photo.uri, photo.displayName, shape)
+    }
+
+    private fun editSelected(what: String, edit: suspend (PhotoEditor, Photo) -> Unit) {
+        val photos = _state.value.photos.filter { it.mediaId in _state.value.selected && !it.isVideo }
+        if (photos.isEmpty()) {
+            _state.update { it.copy(message = "$what: select photos (videos can't be edited)") }
+            return
+        }
+        viewModelScope.launch {
+            val editor = PhotoEditor(getApplication())
+            var done = 0
+            var error: String? = null
+            for ((i, photo) in photos.withIndex()) {
+                _state.update { it.copy(message = "$what: ${i + 1} of ${photos.size}…") }
+                try {
+                    edit(editor, photo)
+                    done++
+                } catch (e: Exception) {
+                    error = e.message
+                    if (e is PhotoEditor.ModelDownloading) break // same for every photo; try later
+                }
+            }
+            finishEdit(what, done, error)
+        }
+    }
+
+    private fun finishEdit(what: String, done: Int, error: String?) {
+        val text = buildString {
+            append("$what: saved $done new photo(s) to Pictures/CakeSync (originals unchanged)")
+            if (error != null) append(" · problem: $error")
+        }
+        _state.update { it.copy(message = text, selected = emptySet()) }
+    }
+
     fun loadOrderTags() {
         viewModelScope.launch {
             val tags = withContext(Dispatchers.IO) { store.orderTags() }
@@ -217,7 +261,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Cycles a photo between included and excluded (an explicit user decision). */
     fun toggle(photo: Photo) {
         viewModelScope.launch(Dispatchers.IO) {
-            store.setOverride(photo.mediaId, !photo.included(settings.excludePeople))
+            store.setOverride(photo.mediaId, !photo.included(settings.excludePeople, settings.skipDuplicates))
             refresh()
         }
     }
@@ -257,7 +301,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             SyncScheduler.apply(getApplication())
         }
         _state.update { it.copy(settings = after) }
-        if (before.requireApproval != after.requireApproval || before.excludePeople != after.excludePeople) refresh()
+        if (before.requireApproval != after.requireApproval || before.excludePeople != after.excludePeople ||
+            before.skipDuplicates != after.skipDuplicates
+        ) refresh()
     }
 
     private fun readSettings() = SettingsState(
@@ -268,6 +314,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         requireApproval = settings.requireApproval,
         excludePeople = settings.excludePeople,
         includeVideos = settings.includeVideos,
+        skipDuplicates = settings.skipDuplicates,
         scanDays = settings.scanDays,
         scanFolders = settings.scanFolders,
     )

@@ -11,7 +11,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 UA = "CakeSyncCI/0.1 (https://github.com/sumit-uit/mobilegamma)"
 folder = sys.argv[1] if len(sys.argv) > 1 else "test-images"
@@ -51,3 +51,8 @@ print("built zz_cake_with_person.jpg and zz_cake_face_topper.jpg")
 # source frame for the cake test video (made with ffmpeg by the workflow)
 os.makedirs("video-src", exist_ok=True)
 cake.save(os.path.join("video-src", "cake.jpg"), quality=92)
+
+# 3) a burst: a sharp shot and a blurry near-identical one -> the blurry one is a duplicate
+cake.save(os.path.join(folder, "zz_burst_sharp.jpg"), quality=92)
+cake.filter(ImageFilter.GaussianBlur(4)).save(os.path.join(folder, "zz_burst_blurry.jpg"), quality=92)
+print("built zz_burst_sharp.jpg and zz_burst_blurry.jpg")

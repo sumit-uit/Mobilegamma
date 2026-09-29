@@ -76,6 +76,8 @@ dependencies {
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.mlkit:object-detection:17.0.2")
+    // Background removal; the model is delivered by Google Play services on first use.
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 
     // Google sign-in / authorization for the Drive API
     implementation("com.google.android.gms:play-services-auth:21.3.0")

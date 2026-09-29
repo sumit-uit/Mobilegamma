@@ -28,18 +28,22 @@ data class Photo(
     val category: String? = null,
     /** Customer/order tag, e.g. "Order #123 / Priya"; uploads then go to that order's folder. */
     val orderTag: String? = null,
+    /** Sharpness (variance of Laplacian); null = not measured (e.g. videos). */
+    val sharpness: Double? = null,
+    /** A near-identical shot of a sharper photo taken moments apart. */
+    val duplicate: Boolean = false,
 ) {
     val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
 
     /** Whether this photo will be uploaded; the user's choice always wins. */
-    fun included(excludePeople: Boolean): Boolean =
-        override ?: (isMatch && !(excludePeople && hasPeople))
+    fun included(excludePeople: Boolean, skipDuplicates: Boolean = true): Boolean =
+        override ?: (isMatch && !(excludePeople && hasPeople) && !(skipDuplicates && duplicate))
 }
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 8) {
+    SQLiteOpenHelper(context, "photos.db", null, 9) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -61,7 +65,10 @@ class PhotoStore private constructor(context: Context) :
                 duration_ms INTEGER,
                 category TEXT,
                 category_manual INTEGER NOT NULL DEFAULT 0,
-                order_tag TEXT
+                order_tag TEXT,
+                sharpness REAL,
+                dhash INTEGER,
+                duplicate INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
@@ -83,6 +90,11 @@ class PhotoStore private constructor(context: Context) :
         if (oldVersion < 8) {
             db.execSQL("ALTER TABLE photos ADD COLUMN category_manual INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE photos ADD COLUMN order_tag TEXT")
+        }
+        if (oldVersion < 9) {
+            db.execSQL("ALTER TABLE photos ADD COLUMN sharpness REAL")
+            db.execSQL("ALTER TABLE photos ADD COLUMN dhash INTEGER")
+            db.execSQL("ALTER TABLE photos ADD COLUMN duplicate INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -145,6 +157,58 @@ class PhotoStore private constructor(context: Context) :
         } finally {
             db.endTransaction()
         }
+    }
+
+    fun setQuality(mediaId: Long, sharpness: Double, dHash: Long) = updateEach(listOf(mediaId)) {
+        put("sharpness", sharpness)
+        put("dhash", dHash)
+    }
+
+    /** Photos (not videos) whose sharpness hasn't been measured yet. */
+    fun missingQuality(): List<Photo> = query("WHERE is_video = 0 AND sharpness IS NULL")
+
+    /**
+     * Groups matched photos taken within [windowMs] of each other that look nearly the same
+     * (difference hash within [maxDistance] bits) and marks all but the sharpest in each
+     * group as duplicates.
+     */
+    fun markDuplicates(windowMs: Long = 90_000, maxDistance: Int = 12): Int {
+        data class Shot(val id: Long, val takenAt: Long, val sharpness: Double, val hash: Long)
+        val shots = readableDatabase.rawQuery(
+            "SELECT media_id, taken_at, sharpness, dhash FROM photos " +
+                "WHERE is_video = 0 AND sharpness IS NOT NULL AND dhash IS NOT NULL " +
+                "AND (is_match = 1 OR override = 1) ORDER BY taken_at",
+            null,
+        ).use { c -> buildList { while (c.moveToNext()) add(Shot(c.getLong(0), c.getLong(1), c.getDouble(2), c.getLong(3))) } }
+
+        val duplicates = mutableSetOf<Long>()
+        var group = mutableListOf<Shot>()
+        fun closeGroup() {
+            if (group.size > 1) {
+                val best = group.maxBy { it.sharpness }
+                group.filter { it.id != best.id }.forEach { duplicates += it.id }
+            }
+            group = mutableListOf()
+        }
+        for (shot in shots) {
+            val last = group.lastOrNull()
+            val sameBurst = last != null && shot.takenAt - last.takenAt <= windowMs &&
+                group.any { com.mobilegamma.cakesync.scan.Quality.distance(it.hash, shot.hash) <= maxDistance }
+            if (!sameBurst) closeGroup()
+            group += shot
+        }
+        closeGroup()
+
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("UPDATE photos SET duplicate = 0")
+            duplicates.forEach { db.execSQL("UPDATE photos SET duplicate = 1 WHERE media_id = $it") }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return duplicates.size
     }
 
     fun setFaces(mediaId: Long, faces: Int) {
@@ -210,8 +274,9 @@ class PhotoStore private constructor(context: Context) :
      * Photos waiting to be uploaded. With [excludePeople], automatic matches must have been
      * face-checked and contain no faces; photos the user explicitly included always go.
      */
-    fun pendingUploads(requireApproval: Boolean, excludePeople: Boolean): List<Photo> {
-        val auto = if (excludePeople) "is_match = 1 AND faces = 0" else "is_match = 1"
+    fun pendingUploads(requireApproval: Boolean, excludePeople: Boolean, skipDuplicates: Boolean = true): List<Photo> {
+        var auto = if (excludePeople) "is_match = 1 AND faces = 0" else "is_match = 1"
+        if (skipDuplicates) auto += " AND duplicate = 0"
         val include = if (requireApproval) "override = 1" else
             "(override = 1 OR (override IS NULL AND $auto))"
         return query("WHERE uploaded_at IS NULL AND $include ORDER BY taken_at ASC")
@@ -242,6 +307,8 @@ class PhotoStore private constructor(context: Context) :
             durationMs = getColumnIndexOrThrow("duration_ms").let { if (isNull(it)) null else getLong(it) },
             category = getColumnIndexOrThrow("category").let { if (isNull(it)) null else getString(it) },
             orderTag = getColumnIndexOrThrow("order_tag").let { if (isNull(it)) null else getString(it) },
+            sharpness = getColumnIndexOrThrow("sharpness").let { if (isNull(it)) null else getDouble(it) },
+            duplicate = getInt(getColumnIndexOrThrow("duplicate")) == 1,
         )
     }
 

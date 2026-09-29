@@ -151,7 +151,7 @@ jobs:
           {
             echo "# Emulator run for ${GITHUB_SHA::7}"
             echo
-            echo '```'; cat result.txt labels.txt people_checks.txt 2>/dev/null || true; echo '```'
+            echo '```'; cat result.txt labels.txt people_checks.txt edited.txt white_background.txt 2>/dev/null || true; echo '```'
             for f in *.png; do [ -e "$f" ] || continue; echo; echo "## $f"; echo "![]($f)"; done
           } > README.md
           git init -q -b emulator-screenshots
