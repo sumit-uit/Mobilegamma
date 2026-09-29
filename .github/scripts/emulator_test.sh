@@ -272,12 +272,15 @@ if [ -n "$label" ]; then
     tap_text "1:1 Instagram post" || true
     sleep 8
     shot 05g-after-crop
-    squares=$(adb shell content query --uri content://media/external/images/media \
-      --projection _display_name:width:height --where "relative_path LIKE 'Pictures/CakeSync%'" | tee "$OUT/edited.txt" | grep -c "width=1080, height=1080" || true)
+    squares=$(adb shell "content query --uri content://media/external/images/media --projection _display_name:width:height:relative_path" \
+      | grep "Pictures/CakeSync" | tee "$OUT/edited.txt" | grep -c "width=1080, height=1080" || true)
     cat "$OUT/edited.txt"
     if [ "${squares:-0}" -ge 1 ]; then echo "PASS: 1:1 crop saved"; crop_ok=0; else echo "FAIL: no 1:1 crop found"; fi
   fi
 fi
+
+scroll_top() { for i in 1 2 3 4; do adb shell input swipe 540 700 540 1900 200; sleep 0.5; done; }
+scroll_top
 
 echo "== White background (needs the Play services model; reported, not required)"
 label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
@@ -287,12 +290,17 @@ if [ -n "$label" ]; then
   sleep 2
   adb shell input swipe 540 1700 540 1100 400
   sleep 1
-  tap_text "White background" || true
-  sleep 15
-  shot 05h-after-white-background
-  dump_ui | grep -oE 'text="White background:[^"]*"' | tee "$OUT/white_background.txt" || true
+  if tap_text "White background"; then
+    sleep 20
+    shot 05h-after-white-background
+    scroll_top
+    dump_ui | grep -oE 'text="White background:[^"]*"' | tee "$OUT/white_background.txt" || true
+  else
+    echo "White background button not found" | tee "$OUT/white_background.txt"
+  fi
 fi
 check_no_crash
+scroll_top
 
 echo "== Connect Drive (no Google account on the emulator: expect an error message, not a crash)"
 adb shell input keyevent KEYCODE_MOVE_HOME
