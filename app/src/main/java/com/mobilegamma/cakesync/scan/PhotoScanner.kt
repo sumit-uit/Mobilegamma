@@ -7,6 +7,7 @@ import android.util.Log
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
@@ -26,7 +27,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * Finds photos not scanned yet, labels them and counts faces on-device with ML Kit.
+ * Finds photos and videos not scanned yet, labels them and counts faces on-device with ML Kit.
  * Nothing leaves the phone during scanning.
  */
 class PhotoScanner(private val context: Context) {
@@ -51,7 +52,10 @@ class PhotoScanner(private val context: Context) {
             // Checking against known ids (not a "last scanned" marker) means newly added
             // folders or a longer window also pick up older photos.
             val known = store.knownIds()
-            val candidates = queryImages(since, settings.scanFolders).filter { it.id !in known }
+            val candidates = buildList {
+                addAll(queryMedia(IMAGES, since, settings.scanFolders))
+                if (settings.includeVideos) addAll(queryMedia(VIDEOS, since, settings.scanFolders))
+            }.filter { it.id !in known }
             val labeler = ImageLabeling.getClient(
                 ImageLabelerOptions.Builder().setConfidenceThreshold(0.3f).build()
             )
@@ -78,7 +82,8 @@ class PhotoScanner(private val context: Context) {
             try {
                 candidates.forEachIndexed { index, item ->
                     onProgress(index, total)
-                    val result = analyze(labeler, faceDetector, objectDetector, item.uri) ?: return@forEachIndexed
+                    val result = analyze(labeler, faceDetector, objectDetector, item.uri, item.isVideo)
+                        ?: return@forEachIndexed
                     val score = result.labels.filter { it.first.lowercase() in targets }
                         .maxOfOrNull { it.second } ?: 0f
                     val isMatch = score >= threshold
@@ -95,6 +100,8 @@ class PhotoScanner(private val context: Context) {
                             override = null,
                             uploadedAtMillis = null,
                             faces = result.faces,
+                            isVideo = item.isVideo,
+                            durationMs = item.durationMs,
                         )
                     )
                     scanned++
@@ -102,7 +109,8 @@ class PhotoScanner(private val context: Context) {
                 }
                 backfill.forEachIndexed { index, photo ->
                     onProgress(candidates.size + index, total)
-                    val faces = countPeople(faceDetector, objectDetector, photo.uri) ?: return@forEachIndexed
+                    val faces = countPeople(faceDetector, objectDetector, photo.uri, photo.isVideo)
+                        ?: return@forEachIndexed
                     store.setFaces(photo.mediaId, faces)
                 }
                 onProgress(total, total)
@@ -116,27 +124,42 @@ class PhotoScanner(private val context: Context) {
 
     private class Analysis(val labels: List<Pair<String, Float>>, val faces: Int?)
 
+    /**
+     * Labels and face-checks a photo, or several frames of a video. For a video the
+     * strongest label scores and the most people seen in any frame are used.
+     */
     private suspend fun analyze(
         labeler: ImageLabeler,
         faceDetector: FaceDetector,
         objectDetector: ObjectDetector,
         uri: Uri,
+        isVideo: Boolean,
     ): Analysis? = try {
-        val bitmap = thumbnail(uri)
-        val labels = labeler.process(InputImage.fromBitmap(bitmap, 0)).await()
-            .map { it.text to it.confidence }
-            .sortedByDescending { it.second }
-        val faces = runCatching { peopleIn(bitmap, faceDetector, objectDetector) }
-            .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
-            .getOrNull()
-        Analysis(labels, faces)
+        val frames = frames(uri, isVideo)
+        if (frames.isEmpty()) throw IllegalStateException("no frames")
+        val best = mutableMapOf<String, Float>()
+        var people: Int? = null
+        for (frame in frames) {
+            labeler.process(InputImage.fromBitmap(frame, 0)).await().forEach {
+                best[it.text] = maxOf(best[it.text] ?: 0f, it.confidence)
+            }
+            runCatching { peopleIn(frame, faceDetector, objectDetector) }
+                .onSuccess { people = maxOf(people ?: 0, it) }
+                .onFailure { Log.w(TAG, "Face detection failed for $uri", it) }
+        }
+        Analysis(best.toList().sortedByDescending { it.second }, people)
     } catch (e: Exception) {
         Log.w(TAG, "Could not analyse $uri", e)
         null
     }
 
-    private suspend fun countPeople(faceDetector: FaceDetector, objectDetector: ObjectDetector, uri: Uri): Int? = try {
-        peopleIn(thumbnail(uri), faceDetector, objectDetector)
+    private suspend fun countPeople(
+        faceDetector: FaceDetector,
+        objectDetector: ObjectDetector,
+        uri: Uri,
+        isVideo: Boolean,
+    ): Int? = try {
+        frames(uri, isVideo).maxOfOrNull { peopleIn(it, faceDetector, objectDetector) }
     } catch (e: Exception) {
         Log.w(TAG, "Could not face-check $uri", e)
         null
@@ -162,74 +185,95 @@ class PhotoScanner(private val context: Context) {
         }
     }
 
-    // A thumbnail is plenty for labelling and faces, and far faster than the full image.
-    private fun thumbnail(uri: Uri): Bitmap =
-        context.contentResolver.loadThumbnail(uri, Size(768, 768), null)
+    /**
+     * Images to analyse: a thumbnail for a photo (plenty for labelling and faces, and far
+     * faster than the full image), or frames at 10%, 50% and 90% of a video.
+     */
+    private fun frames(uri: Uri, isVideo: Boolean): List<Bitmap> {
+        if (!isVideo) return listOf(context.contentResolver.loadThumbnail(uri, Size(768, 768), null))
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            val durationUs = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L) * 1000
+            listOf(0.1, 0.5, 0.9).mapNotNull { at ->
+                retriever.getScaledFrameAtTime(
+                    (durationUs * at).toLong(), MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 768, 768,
+                )
+            }.ifEmpty {
+                // Some videos report no duration; fall back to the system thumbnail.
+                listOf(context.contentResolver.loadThumbnail(uri, Size(768, 768), null))
+            }
+        } finally {
+            retriever.release()
+        }
+    }
 
     private data class MediaItem(
         val id: Long,
-        val uri: android.net.Uri,
+        val uri: Uri,
         val name: String,
         val mimeType: String,
         val takenAtMillis: Long,
-        val addedSec: Long,
+        val isVideo: Boolean,
+        val durationMs: Long?,
     )
 
-    /** All folders that contain photos, largest first. */
+    /** All folders that contain photos or videos, largest first. */
     suspend fun listFolders(): List<Folder> = withContext(Dispatchers.IO) {
         val counts = mutableMapOf<String, Int>()
-        context.contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Images.Media.RELATIVE_PATH),
-            null, null, null,
-        )?.use { c ->
-            val col = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
-            while (c.moveToNext()) {
-                val path = c.getString(col) ?: continue
-                counts[path] = (counts[path] ?: 0) + 1
-            }
+        val collections = if (settings.includeVideos) listOf(IMAGES, VIDEOS) else listOf(IMAGES)
+        for (collection in collections) {
+            context.contentResolver.query(collection, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)
+                ?.use { c ->
+                    val col = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                    while (c.moveToNext()) {
+                        val path = c.getString(col) ?: continue
+                        counts[path] = (counts[path] ?: 0) + 1
+                    }
+                }
         }
         counts.map { Folder(it.key, it.value) }.sortedByDescending { it.count }
     }
 
-    private fun queryImages(sinceSec: Long, folders: Set<String>): List<MediaItem> {
-        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.MIME_TYPE,
-            MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.DATE_ADDED,
-        )
-        val items = mutableListOf<MediaItem>()
-        var selection = "${MediaStore.Images.Media.DATE_ADDED} > ?"
+    /** Photos ([IMAGES]) or videos ([VIDEOS]) added after [sinceSec] in [folders] (empty = all). */
+    private fun queryMedia(collection: Uri, sinceSec: Long, folders: Set<String>): List<MediaItem> {
+        val isVideo = collection == VIDEOS
+        val projection = buildList {
+            add(MediaStore.MediaColumns._ID)
+            add(MediaStore.MediaColumns.DISPLAY_NAME)
+            add(MediaStore.MediaColumns.MIME_TYPE)
+            add(MediaStore.MediaColumns.DATE_TAKEN)
+            add(MediaStore.MediaColumns.DATE_ADDED)
+            if (isVideo) add(MediaStore.MediaColumns.DURATION)
+        }.toTypedArray()
+        var selection = "${MediaStore.MediaColumns.DATE_ADDED} > ?"
         val args = mutableListOf(sinceSec.toString())
         if (folders.isNotEmpty()) {
-            selection += " AND ${MediaStore.Images.Media.RELATIVE_PATH} IN (${folders.joinToString { "?" }})"
+            selection += " AND ${MediaStore.MediaColumns.RELATIVE_PATH} IN (${folders.joinToString { "?" }})"
             args += folders
         }
+        val items = mutableListOf<MediaItem>()
         context.contentResolver.query(
-            collection,
-            projection,
-            selection,
-            args.toTypedArray(),
-            "${MediaStore.Images.Media.DATE_ADDED} ASC",
+            collection, projection, selection, args.toTypedArray(), "${MediaStore.MediaColumns.DATE_ADDED} ASC",
         )?.use { c ->
-            val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val mimeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
-            val takenCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN)
-            val addedCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+            val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+            val mimeCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+            val takenCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
+            val addedCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+            val durationCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.DURATION) else -1
             while (c.moveToNext()) {
                 val id = c.getLong(idCol)
                 val added = c.getLong(addedCol)
                 items += MediaItem(
                     id = id,
                     uri = ContentUris.withAppendedId(collection, id),
-                    name = c.getString(nameCol) ?: "photo_$id.jpg",
-                    mimeType = c.getString(mimeCol) ?: "image/jpeg",
+                    name = c.getString(nameCol) ?: if (isVideo) "video_$id.mp4" else "photo_$id.jpg",
+                    mimeType = c.getString(mimeCol) ?: if (isVideo) "video/mp4" else "image/jpeg",
                     takenAtMillis = if (c.isNull(takenCol) || c.getLong(takenCol) == 0L) added * 1000 else c.getLong(takenCol),
-                    addedSec = added,
+                    isVideo = isVideo,
+                    durationMs = if (durationCol >= 0 && !c.isNull(durationCol)) c.getLong(durationCol) else null,
                 )
             }
         }
@@ -238,5 +282,7 @@ class PhotoScanner(private val context: Context) {
 
     private companion object {
         const val TAG = "PhotoScanner"
+        val IMAGES: Uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val VIDEOS: Uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
     }
 }

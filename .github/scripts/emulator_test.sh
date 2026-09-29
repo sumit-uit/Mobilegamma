@@ -77,14 +77,18 @@ adb logcat -c
 echo "== Load test photos"
 adb shell mkdir -p /sdcard/Pictures/CakeSyncTest
 for f in test-images/*.jpg; do adb push "$f" /sdcard/Pictures/CakeSyncTest/ >/dev/null; done
+adb shell mkdir -p /sdcard/Movies/CakeSyncTest
+for f in test-videos/*.mp4; do [ -e "$f" ] || continue; adb push "$f" /sdcard/Movies/CakeSyncTest/ >/dev/null; done
 adb shell content call --uri content://media --method scan_volume --arg external_primary >/dev/null || true
 sleep 5
-echo "MediaStore now has $(adb shell content query --uri content://media/external/images/media --projection _display_name | grep -c 'Row:') image(s)"
+echo "MediaStore now has $(adb shell content query --uri content://media/external/images/media --projection _display_name | grep -c 'Row:') image(s)" \
+  "and $(adb shell content query --uri content://media/external/video/media --projection _display_name | grep -c 'Row:') video(s)"
 
 echo "== Grant permissions and launch"
 sleep 20  # let the freshly booted system settle
 dismiss_system_dialogs
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_IMAGES
+adb shell pm grant "$PKG" android.permission.READ_MEDIA_VIDEO
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
 adb shell am start -W -n "$PKG/.ui.MainActivity"
 wait_for_text "Scan now" 60
@@ -96,7 +100,7 @@ tap_text "Scan now"
 wait_for_text "Scanned" 180
 sleep 3
 shot 02-after-scan-matches
-result=$(dump_ui | grep -oE 'Scanned [0-9]+ new photo\(s\), [0-9]+ match\(es\)' | head -1)
+result=$(dump_ui | grep -oE 'Scanned [0-9]+ new item\(s\), [0-9]+ match\(es\)' | head -1)
 echo "Result: $result"
 echo "$result" > "$OUT/result.txt"
 check_no_crash
@@ -107,10 +111,11 @@ adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos.db-wal" 2>
 python3 - "$OUT/photos.db" <<'PY' | tee "$OUT/labels.txt" || true
 import sqlite3, sys
 db = sqlite3.connect(sys.argv[1])
-for name, match, score, faces, labels in db.execute(
-        "SELECT display_name, is_match, score, faces, labels FROM photos ORDER BY display_name"):
+for name, match, score, faces, video, labels in db.execute(
+        "SELECT display_name, is_match, score, faces, is_video, labels FROM photos ORDER BY display_name"):
     skip = " (skipped: people)" if match and faces else ""
-    print(f"{'MATCH' if match else '     '} {name:12} cake={score:.2f} faces={faces}{skip}  {labels}")
+    kind = "video" if video else "photo"
+    print(f"{'MATCH' if match else '     '} {kind} {name:12} cake={score:.2f} faces={faces}{skip}  {labels}")
 PY
 
 echo "== Labels seen on all photos"
@@ -166,6 +171,7 @@ python3 - "$OUT/photos.db" <<'PY' | tee "$OUT/people_checks.txt" || people_ok=1
 import sqlite3, sys
 db = sqlite3.connect(sys.argv[1])
 rows = {n: (m, f) for n, m, f in db.execute("SELECT display_name, is_match, faces FROM photos")}
+videos = {n: m for n, m in db.execute("SELECT display_name, is_match FROM photos WHERE is_video = 1")}
 failed = False
 def check(name, want_people, blocking=True):
     global failed
@@ -179,6 +185,14 @@ def check(name, want_people, blocking=True):
     print(f"{verdict} {name}: faces={faces} (want {'people' if want_people else 'no people'})")
     failed |= blocking and not ok
 check("zz_cake_with_person.jpg", True)
+# videos: the cake video must be found, the other one must not
+for name, want in (("zz_cake_video.mp4", True), ("zz_other_video.mp4", False)):
+    if name not in videos:
+        print(f"FAIL {name}: video not scanned"); failed = True
+    elif bool(videos[name]) != want:
+        print(f"FAIL {name}: match={bool(videos[name])} (want {want})"); failed = True
+    else:
+        print(f"PASS {name}: match={bool(videos[name])}")
 # Toppers with printed faces are usually skipped like people; the user taps to include them.
 check("zz_cake_face_topper.jpg", False, blocking=False)
 sys.exit(1 if failed else 0)

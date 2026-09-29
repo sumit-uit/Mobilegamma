@@ -31,6 +31,7 @@ data class SettingsState(
     val dailySyncEnabled: Boolean,
     val requireApproval: Boolean,
     val excludePeople: Boolean,
+    val includeVideos: Boolean,
     val scanDays: Int,
     val scanFolders: Set<String>,
 )
@@ -110,7 +111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     scanProgress = null,
                     message = result.fold(
-                        { r -> "Scanned ${r.scanned} new photo(s), ${r.matched} match(es)" },
+                        { r -> "Scanned ${r.scanned} new item(s), ${r.matched} match(es)" },
                         { e -> "Scan failed: ${e.message}" },
                     ),
                 )
@@ -192,6 +193,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         dailySyncEnabled = settings.dailySyncEnabled,
         requireApproval = settings.requireApproval,
         excludePeople = settings.excludePeople,
+        includeVideos = settings.includeVideos,
         scanDays = settings.scanDays,
         scanFolders = settings.scanFolders,
     )

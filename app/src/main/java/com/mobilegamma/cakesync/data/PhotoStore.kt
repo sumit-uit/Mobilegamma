@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.net.Uri
 
-/** A photo the app has scanned, with its classification and upload state. */
+/** A photo or video the app has scanned, with its classification and upload state. */
 data class Photo(
     val mediaId: Long,
     val uri: Uri,
@@ -22,6 +22,8 @@ data class Photo(
     val uploadedAtMillis: Long?,
     /** Faces found by on-device face detection; null = not checked yet. */
     val faces: Int? = null,
+    val isVideo: Boolean = false,
+    val durationMs: Long? = null,
 ) {
     val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
@@ -33,7 +35,7 @@ data class Photo(
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 5) {
+    SQLiteOpenHelper(context, "photos.db", null, 6) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -50,7 +52,9 @@ class PhotoStore private constructor(context: Context) :
                 override INTEGER,
                 uploaded_at INTEGER,
                 drive_file_id TEXT,
-                faces INTEGER
+                faces INTEGER,
+                is_video INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER
             )
             """.trimIndent()
         )
@@ -60,6 +64,10 @@ class PhotoStore private constructor(context: Context) :
         if (oldVersion < 2) db.execSQL("ALTER TABLE photos ADD COLUMN faces INTEGER")
         // v3/v4: people and cake-topper checks improved; re-check every photo on the next scan.
         if (oldVersion < 5) db.execSQL("UPDATE photos SET faces = NULL")
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE photos ADD COLUMN is_video INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE photos ADD COLUMN duration_ms INTEGER")
+        }
     }
 
     fun contains(mediaId: Long): Boolean =
@@ -82,6 +90,8 @@ class PhotoStore private constructor(context: Context) :
             put("score", photo.score)
             put("is_match", if (photo.isMatch) 1 else 0)
             photo.faces?.let { put("faces", it) }
+            put("is_video", if (photo.isVideo) 1 else 0)
+            photo.durationMs?.let { put("duration_ms", it) }
         }
         writableDatabase.insertWithOnConflict("photos", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
@@ -178,6 +188,8 @@ class PhotoStore private constructor(context: Context) :
             override = if (isNull(overrideIdx)) null else getInt(overrideIdx) == 1,
             uploadedAtMillis = if (isNull(uploadedIdx)) null else getLong(uploadedIdx),
             faces = if (isNull(facesIdx)) null else getInt(facesIdx),
+            isVideo = getInt(getColumnIndexOrThrow("is_video")) == 1,
+            durationMs = getColumnIndexOrThrow("duration_ms").let { if (isNull(it)) null else getLong(it) },
         )
     }
 

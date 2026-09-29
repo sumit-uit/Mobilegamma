@@ -47,3 +47,7 @@ topper = cake.copy()
 topper.paste(small, ((cake.width - small.width) // 2, (cake.height - small.height) // 2))
 topper.save(os.path.join(folder, "zz_cake_face_topper.jpg"), quality=92)
 print("built zz_cake_with_person.jpg and zz_cake_face_topper.jpg")
+
+# source frame for the cake test video (made with ffmpeg by the workflow)
+os.makedirs("video-src", exist_ok=True)
+cake.save(os.path.join("video-src", "cake.jpg"), quality=92)

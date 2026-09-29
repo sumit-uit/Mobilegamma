@@ -74,7 +74,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.ImageLoader
 import coil3.compose.AsyncImage
+import coil3.compose.setSingletonImageLoaderFactory
+import coil3.video.VideoFrameDecoder
 import com.mobilegamma.cakesync.data.Photo
 
 class MainActivity : ComponentActivity() {
@@ -84,6 +87,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            setSingletonImageLoaderFactory { ctx ->
+                ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build()
+            }
             val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
             MaterialTheme(colorScheme = colors) { MainScreen(viewModel) }
         }
@@ -150,6 +156,7 @@ private fun MainScreen(viewModel: MainViewModel) {
                         val perms = buildList {
                             if (Build.VERSION.SDK_INT >= 33) {
                                 add(Manifest.permission.READ_MEDIA_IMAGES)
+                                add(Manifest.permission.READ_MEDIA_VIDEO)
                                 add(Manifest.permission.POST_NOTIFICATIONS)
                             } else {
                                 add(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -336,6 +343,9 @@ private fun SettingsCard(s: SettingsState, folders: List<PhotoScanner.Folder>?, 
             SwitchRow("Skip photos with people (face detection)", s.excludePeople) {
                 viewModel.updateSettings { excludePeople = it }
             }
+            SwitchRow("Include videos", s.includeVideos) {
+                viewModel.updateSettings { includeVideos = it }
+            }
 
             Text("Photos to scan", style = MaterialTheme.typography.titleSmall)
             Row(
@@ -399,6 +409,18 @@ private fun PhotoTile(photo: Photo, excludePeople: Boolean, onClick: () -> Unit)
                 !included -> "✕"
                 photo.override == true -> "＋"
                 else -> null
+            }
+            if (photo.isVideo) {
+                Text(
+                    "▶ " + (photo.durationMs?.let { formatDuration(it) } ?: "video"),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(4.dp)
+                        .background(Color(0xAA000000), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp),
+                )
             }
             badge?.let {
                 Text(
@@ -493,4 +515,9 @@ private fun FolderPickerDialog(
             }
         },
     )
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    return "%d:%02d".format(totalSec / 60, totalSec % 60)
 }

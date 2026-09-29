@@ -1,7 +1,7 @@
 # Mobilegamma: CakeSync
 
-An Android app that finds cake photos in your gallery **on the device** and uploads
-them to Google Drive every day. A separate workflow (Zapier, Make, n8n and so on) can
+An Android app that finds cake photos **and videos** in your gallery **on the device** and
+uploads them to Google Drive every day. A separate workflow (Zapier, Make, n8n and so on) can
 then pick them up from Drive and post them to Meta apps.
 
 ```
@@ -14,6 +14,10 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   leave the phone to be analysed.
 - **Configurable labels:** match "Cake", or add more (e.g. `Cake, Dessert, Food`).
   Changing labels or the confidence threshold re-checks photos already scanned.
+- **Videos too:** frames at 10%, 50% and 90% of each video are checked the same way as
+  photos. Uploads stream from disk using Drive's resumable upload, and run as a foreground
+  job with a progress notification, so large videos don't run out of memory or get cut off.
+  Turn off with "Include videos".
 - **Skip photos with people:** on-device face detection (ML Kit) marks cake photos that
   contain a person with 👤 and leaves them out of uploads. Known limitation: cakes with a
   printed photo or character face on them are usually skipped too. Tap them in the grid to
