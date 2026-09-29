@@ -298,6 +298,7 @@ if tap_text "Settings"; then
     sleep 2
     tap_text "Business name" && adb shell input text "Soni%sBakes"
     sleep 1
+    hide_keyboard
     tap_text "Save name" || true
     sleep 1
     shot 05i-brand-kit
