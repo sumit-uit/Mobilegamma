@@ -265,6 +265,8 @@ if [ -n "$label" ]; then
   sleep 2
   tap_exact "All" || true   # select every shown item; videos are skipped by the editor
   sleep 1
+  adb shell input swipe 540 1700 540 1100 400   # bring the wrapped action buttons on screen
+  sleep 1
   if tap_text "Crop…"; then
     sleep 2
     tap_text "1:1 Instagram post" || true
@@ -283,6 +285,8 @@ if [ -n "$label" ]; then
   pos=$(find_text "$label"); set -- $pos
   adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
   sleep 2
+  adb shell input swipe 540 1700 540 1100 400
+  sleep 1
   tap_text "White background" || true
   sleep 15
   shot 05h-after-white-background
