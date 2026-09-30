@@ -177,6 +177,13 @@ class PhotoStore private constructor(context: Context) :
         put("dhash", dHash)
     }
 
+    /** Look-alike fingerprints (dHash) by photo id, for grouping photos of the same cake. */
+    fun hashes(): Map<Long, Long> = readableDatabase.rawQuery(
+        "SELECT media_id, dhash FROM photos WHERE dhash IS NOT NULL", null,
+    ).use { c ->
+        buildMap { while (c.moveToNext()) put(c.getLong(0), c.getLong(1)) }
+    }
+
     /** Photos (not videos) whose sharpness hasn't been measured yet. */
     fun missingQuality(): List<Photo> = query("WHERE is_video = 0 AND sharpness IS NULL")
 

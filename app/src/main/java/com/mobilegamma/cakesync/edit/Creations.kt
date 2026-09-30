@@ -31,6 +31,7 @@ object Creations {
     private fun kindOf(name: String): String = when {
         name.startsWith("CakeSync_reel_") -> "🎬 Reel"
         name.startsWith("CakeSync_collage_") -> "🧩 Collage"
+        name.startsWith("CakeSync_menu_") -> "📋 Menu card"
         name.contains("_studio") -> "🪄 Studio edit"
         name.contains("_filter_") -> "🎨 " + name.substringAfter("_filter_").substringBefore('.')
             .replaceFirstChar { it.uppercase() } + " filter"

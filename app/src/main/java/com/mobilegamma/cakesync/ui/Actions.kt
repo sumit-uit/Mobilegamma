@@ -31,10 +31,11 @@ enum class EditAction(
     val minPhotos: Int = 1,
 ) {
     STUDIO("Edit", "🪄", "Photo studio", "New background, filters, light and crop", CakeBrush.white),
+    MENU("Menu", "📋", "Menu", "Names, prices and a menu card to share", CakeBrush.brand),
     REEL("Reel", "🎬", "Reel", "Video with music and transitions", CakeBrush.reel),
     COLLAGE("Collage", "🧩", "Collage", "2 to 9 photos in one post", CakeBrush.collage, minPhotos = 2),
     FILTER("Filter", "🎨", "Filter", "Warm, Pastel, Vintage and more", CakeBrush.filter),
-    BRAND("Brand", "🏷", "Brand", "Your logo, name and price", CakeBrush.brand),
+    BRAND("Brand", "🏷", "Brand", "Your logo, name and price", CakeBrush.filter),
     WHITE_BG("White bg", "✂", "White background", "Clean product shots", CakeBrush.white),
     CROP("Crop", "▢", "Crop", "1:1, 4:5 and 9:16 sizes", CakeBrush.crop),
     SHARE("Share", "📤", "Share", "Instagram, WhatsApp and more", CakeBrush.share),
@@ -46,7 +47,7 @@ enum class EditAction(
 
     companion object {
         /** Shown as big cards on the Create screen. */
-        val creative = listOf(STUDIO, REEL, COLLAGE, FILTER, BRAND, CROP, SHARE, CATALOG)
+        val creative = listOf(MENU, STUDIO, REEL, COLLAGE, FILTER, BRAND, CROP, SHARE)
 
         /** Order in the selection panel: quick sorting first, then creative tools. */
         val panel = listOf(INCLUDE, EXCLUDE, ORDER, CATEGORY, STUDIO, REEL, COLLAGE, FILTER, BRAND, WHITE_BG, CROP, CATALOG, SHARE)
@@ -271,7 +272,8 @@ fun ActionDialog(
             },
             confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         )
-        EditAction.INCLUDE, EditAction.EXCLUDE, EditAction.WHITE_BG, EditAction.STUDIO -> LaunchedEffect(Unit) { onDismiss() }
+        EditAction.INCLUDE, EditAction.EXCLUDE, EditAction.WHITE_BG, EditAction.STUDIO, EditAction.MENU ->
+            LaunchedEffect(Unit) { onDismiss() }
     }
 }
 

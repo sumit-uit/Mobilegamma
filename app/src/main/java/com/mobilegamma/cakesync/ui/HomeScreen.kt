@@ -41,6 +41,7 @@ fun HomeScreen(
     onSeeAll: () -> Unit,
     onOpenPhoto: (Photo) -> Unit,
     onCreate: (EditAction) -> Unit,
+    onOpenMenu: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -91,6 +92,23 @@ fun HomeScreen(
                     AnimatedVisibility(state.resultsReady) {
                         Button(onClick = onViewResults) { Text("👀 View results") }
                     }
+                }
+            }
+        }
+
+        if (state.menuNewCount > 0) {
+            Card(
+                onClick = onOpenMenu,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                shape = MaterialTheme.shapes.large,
+            ) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("📋", fontSize = 28.sp)
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text("${state.menuNewCount} new cake design(s)", style = MaterialTheme.typography.titleMedium)
+                        Text("Swipe to add them to your menu", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("›", fontSize = 28.sp)
                 }
             }
         }

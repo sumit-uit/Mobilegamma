@@ -20,6 +20,20 @@ import com.mobilegamma.cakesync.edit.CollageTemplate
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
 import com.mobilegamma.cakesync.edit.Music
 import com.mobilegamma.cakesync.edit.ReelOptions
+import com.mobilegamma.cakesync.menu.CardEntry
+import com.mobilegamma.cakesync.menu.CardOptions
+import com.mobilegamma.cakesync.menu.ColourNames
+import com.mobilegamma.cakesync.menu.DesignGrouper
+import com.mobilegamma.cakesync.menu.DesignInput
+import com.mobilegamma.cakesync.menu.MenuCard
+import com.mobilegamma.cakesync.menu.MenuData
+import com.mobilegamma.cakesync.menu.MenuItem
+import com.mobilegamma.cakesync.menu.MenuNamer
+import com.mobilegamma.cakesync.menu.MenuSettings
+import com.mobilegamma.cakesync.menu.MenuStore
+import com.mobilegamma.cakesync.menu.PriceCard
+import com.mobilegamma.cakesync.menu.Pricing
+import com.mobilegamma.cakesync.menu.Tier
 import com.mobilegamma.cakesync.edit.Creations
 import com.mobilegamma.cakesync.edit.PhotoEditor
 import com.mobilegamma.cakesync.edit.ReelMaker
@@ -86,15 +100,25 @@ data class UiState(
     val recent: List<Photo> = emptyList(),
     val matchCount: Int = 0,
     val createdCount: Int = 0,
+    /** Designs found in new photos that aren't on the menu yet. */
+    val menuNewCount: Int = 0,
+    /** The menu screen's data while it is open. */
+    val menu: MenuUi? = null,
     /** Whether the first-run introduction still needs showing (null = not loaded yet). */
     val showIntro: Boolean? = null,
 )
+
+/** A suggested new design: photos of one cake, with a generated name. */
+data class Suggestion(val photos: List<Photo>, val hero: Photo, val title: String, val categoryId: String?)
+
+data class MenuUi(val data: MenuData, val suggestions: List<Suggestion>, val loading: Boolean = false)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = Settings(app)
     private val categories = Categories(app)
     private val store = PhotoStore.get(app)
     private val auth = DriveAuth(app)
+    private val menuStore = MenuStore(app)
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -127,7 +151,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     GridTab.CREATED -> created
                 }.filter { tab == GridTab.CREATED || filter == null || it.category == filter }
                 val pending = store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
-                Loaded(photos, pending, matches.sortedByDescending { it.takenAtMillis }.take(12), matches.size, created.size)
+                val newDesigns = runCatching { designGroups(matches, menuStore.load()).size }.getOrDefault(0)
+                Loaded(photos, pending, matches.sortedByDescending { it.takenAtMillis }.take(12), matches.size, created.size, newDesigns)
             }
             val (photos, pending) = loaded.photos to loaded.pending
             _state.update {
@@ -141,6 +166,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     recent = loaded.recent,
                     matchCount = loaded.matchCount,
                     createdCount = loaded.createdCount,
+                    menuNewCount = loaded.newDesigns,
                     showIntro = it.showIntro ?: !settings.onboarded,
                     message = it.message ?: settings.lastSyncMessage,
                     settings = readSettings(),
@@ -155,7 +181,129 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val recent: List<Photo>,
         val matchCount: Int,
         val createdCount: Int,
+        val newDesigns: Int,
     )
+
+    // --- Menu ---
+
+    /** Groups of photos of the same cake that aren't on the menu or skipped yet. */
+    private fun designGroups(matches: List<Photo>, data: MenuData): List<List<Photo>> {
+        val handled = data.handled
+        val candidates = matches.filter {
+            !it.isVideo && it.mediaId !in handled && it.included(settings.excludePeople, skipDuplicates = false)
+        }
+        val byId = candidates.associateBy { it.mediaId }
+        val hashes = store.hashes()
+        val inputs = candidates.map { DesignInput(it.mediaId, it.takenAtMillis, hashes[it.mediaId], it.sharpness, it.orderTag) }
+        return DesignGrouper.group(inputs).map { group -> group.mapNotNull { byId[it.id] } }.filter { it.isNotEmpty() }
+    }
+
+    fun openMenu() {
+        _state.update { it.copy(menu = MenuUi(menuStore.load(), emptyList(), loading = true)) }
+        viewModelScope.launch {
+            val ui = withContext(Dispatchers.IO) {
+                val data = menuStore.load()
+                val groups = designGroups(store.matches(), data).take(40)
+                val taken = data.items.map { it.title }.toMutableSet()
+                val suggestions = groups.map { photos ->
+                    val heroInput = DesignGrouper.hero(photos.map { DesignInput(it.mediaId, it.takenAtMillis, null, it.sharpness, it.orderTag) })
+                    val hero = photos.first { it.mediaId == heroInput.id }
+                    val labels = photos.flatMap { PhotoStore.parseLabels(it.labels) }
+                        .groupBy({ it.first }, { it.second }).map { (k, v) -> k to v.max() }
+                    val colour = runCatching {
+                        val bmp = PhotoEditor.loadScaled(getApplication(), hero.uri, 64)
+                        val x0 = bmp.width / 5
+                        val y0 = bmp.height / 5
+                        val w = bmp.width - 2 * x0
+                        val h = bmp.height - 2 * y0
+                        val px = IntArray(w * h)
+                        bmp.getPixels(px, 0, w, x0, y0, w, h)
+                        ColourNames.dominant(px)
+                    }.getOrNull()
+                    val categoryName = categories.byId(hero.category)?.name ?: "Cake"
+                    val title = MenuNamer.unique(MenuNamer.title(labels, colour, singular(categoryName)), taken)
+                    taken += title
+                    Suggestion(photos, hero, title, hero.category)
+                }
+                MenuUi(data, suggestions)
+            }
+            _state.update { it.copy(menu = ui) }
+        }
+    }
+
+    private fun singular(name: String) = if (name.endsWith("s") && !name.endsWith("ss")) name.dropLast(1) else name
+
+    fun closeMenu() {
+        _state.update { it.copy(menu = null) }
+        refresh()
+    }
+
+    private fun updateMenu(dropSuggestion: Suggestion? = null, change: (MenuData) -> MenuData) {
+        val data = menuStore.update(change)
+        _state.update { s ->
+            val menu = s.menu ?: return@update s
+            s.copy(menu = menu.copy(data = data, suggestions = menu.suggestions.filter { it != dropSuggestion }))
+        }
+    }
+
+    fun addDesign(suggestion: Suggestion, title: String, tier: Tier) = updateMenu(suggestion) { d ->
+        d.copy(items = d.items + MenuItem(
+            id = "d${suggestion.hero.mediaId}",
+            title = title.trim().ifBlank { suggestion.title },
+            categoryId = suggestion.categoryId,
+            photoIds = suggestion.photos.map { it.mediaId },
+            heroId = suggestion.hero.mediaId,
+            heroUri = suggestion.hero.uri.toString(),
+            tier = tier,
+            addedAt = System.currentTimeMillis(),
+        ))
+    }
+
+    fun skipDesign(suggestion: Suggestion) =
+        updateMenu(suggestion) { d -> d.copy(skipped = d.skipped + suggestion.photos.map { it.mediaId }) }
+
+    fun updateMenuItem(item: MenuItem) = updateMenu { d -> d.copy(items = d.items.map { if (it.id == item.id) item else it }) }
+
+    fun removeMenuItem(item: MenuItem) = updateMenu { d -> d.copy(items = d.items.filterNot { it.id == item.id }) }
+
+    fun saveMenuPrices(settings: MenuSettings, cards: List<PriceCard>) = updateMenu { d -> d.copy(settings = settings, cards = cards) }
+
+    /** Renders and saves the menu card pages and PDF, then calls [onDone] with the results. */
+    fun exportMenuCard(options: CardOptions, onDone: (List<Uri>, Uri?) -> Unit) {
+        val data = menuStore.load()
+        if (data.items.isEmpty()) {
+            _state.update { it.copy(message = "Add some designs to your menu first") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(message = "Making your menu card…") }
+            val result = runCatching {
+                val entries = withContext(Dispatchers.IO) { menuEntries(data) }
+                MenuCard.export(getApplication(), entries, options, brandKit(), data.settings)
+            }
+            result.onSuccess { (images, pdf) ->
+                _state.update {
+                    it.copy(
+                        resultsReady = true,
+                        message = "Menu card saved: ${images.size} page(s) in Created" + if (pdf != null) " and a PDF in Downloads" else "",
+                    )
+                }
+                onDone(images, pdf)
+            }.onFailure { e -> _state.update { it.copy(message = "Could not make the menu card: ${e.message}") } }
+        }
+    }
+
+    /** Menu designs with their photo and price text, for the menu card. */
+    fun menuEntries(data: MenuData): List<CardEntry> = data.items.mapNotNull { item ->
+        val photo = MenuCard.loadPhoto(getApplication(), item.heroUri) ?: return@mapNotNull null
+        CardEntry(item.title, Pricing.summary(data.card(item.categoryId), item.tier, item.priceOverride, data.settings.currency), photo)
+    }
+
+    fun shareUris(uris: List<Uri>, mime: String, target: Sharer.Target) {
+        val result = runCatching { Sharer.share(getApplication(), uris.map { it to mime }, "", target) }
+        _state.update { it.copy(message = result.getOrElse { e -> "Could not share: ${e.message}" }) }
+    }
+
 
     /** Ends the first-run introduction, optionally saving the business name. */
     fun finishIntro(businessName: String?) {

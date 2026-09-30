@@ -160,6 +160,10 @@ private fun MainScaffold(
     }
 
     fun startCreate(action: EditAction) {
+        if (action == EditAction.MENU) {
+            viewModel.openMenu()
+            return
+        }
         pending = action
         viewModel.clearSelection()
         if (state.tab == GridTab.CREATED) viewModel.setTab(GridTab.MATCHES)
@@ -229,6 +233,7 @@ private fun MainScaffold(
                     onSeeAll = { go(Screen.GALLERY, GridTab.MATCHES) },
                     onOpenPhoto = { go(Screen.GALLERY, GridTab.MATCHES) },
                     onCreate = ::startCreate,
+                    onOpenMenu = viewModel::openMenu,
                 )
                 Screen.GALLERY -> GalleryScreen(
                     state = state,
@@ -264,6 +269,7 @@ private fun MainScaffold(
             onEdit = { studio = item to StudioTab.FILTERS; openCreation = null },
         )
     }
+    if (state.menu != null) MenuScreen(state, viewModel, onClose = viewModel::closeMenu)
     studio?.let { (photo, tab) ->
         StudioScreen(photo = photo, startTab = tab, viewModel = viewModel) {
             studio = null

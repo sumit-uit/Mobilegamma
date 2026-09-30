@@ -231,6 +231,9 @@ class PhotoEditor(private val context: Context) {
 
     private fun baseName(name: String) = name.substringBeforeLast('.')
 
+    /** Saves a finished picture (e.g. a menu card page) to Pictures/CakeSync. */
+    fun saveImage(bitmap: Bitmap, name: String): Uri = save(bitmap, name)
+
     /** Saves [bitmap] as a JPEG in Pictures/CakeSync/ and returns its MediaStore uri. */
     private fun save(bitmap: Bitmap, name: String): Uri {
         val resolver = context.contentResolver

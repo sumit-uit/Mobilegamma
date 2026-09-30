@@ -478,6 +478,42 @@ fi
 tap_exact "Cancel" >/dev/null 2>&1 || true
 tap_exact "Done" >/dev/null 2>&1 || true
 
+echo "== Menu: set a price, add designs by swiping, make a menu card"
+menu_ok=1
+nav Create || true
+if tap_text "Names, prices"; then
+  sleep 4
+  shot 09-menu-prices
+  if tap_text "Price per kg"; then
+    adb shell input text "800"; sleep 1; hide_keyboard
+  fi
+  scroll_to_text "Save prices" && tap_text "Save prices"
+  sleep 2
+  shot 09b-menu-new-designs
+  for i in 1 2 3; do tap_text "Add to menu" || true; sleep 2; done
+  tap_text "Skip" || true
+  sleep 2
+  tap_text "My menu" || true
+  sleep 2
+  shot 09c-my-menu
+  if tap_text "Menu card"; then
+    sleep 6
+    shot 09d-menu-card-dialog
+    tap_text "Save & share" || true
+    sleep 12
+    shot 09e-menu-card-saved
+    n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "CakeSync_menu_" || true)
+    echo "menu card pages: $n"
+    if [ "${n:-0}" -ge 1 ]; then echo "PASS: menu card saved"; menu_ok=0; else echo "FAIL: no menu card saved"; fi
+    tap_text "Done" || adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  fi
+  adb shell input keyevent KEYCODE_BACK
+  sleep 2
+fi
+nav Home || true
+shot 09f-home-menu-banner
+
 echo "== Filter: select a photo, preview a filter, save"
 filter_ok=1
 nav Gallery || true
@@ -608,6 +644,9 @@ if [ "${matches:-0}" -lt 1 ]; then
 fi
 if [ "$created_ok" -ne 0 ]; then
   echo "FAIL: Created tab check"; exit 1
+fi
+if [ "$menu_ok" -ne 0 ]; then
+  echo "FAIL: menu check"; exit 1
 fi
 if [ "$studio_ok" -ne 0 ]; then
   echo "FAIL: photo studio check"; exit 1

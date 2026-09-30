@@ -29,6 +29,12 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   bottom navigation (Home · Gallery · Create · Settings), a first-run intro, a Home page with
   your numbers and shortcuts, a full-screen photo viewer, and a Create hub where you pick a tool
   and then the photos.
+- **Menu builder:** set prices once per category (per kg with sizes, or per piece and box),
+  plus an extra for themed or custom designs. New photos are grouped into designs (photos of
+  the same cake) and named automatically from what the scanner sees, e.g. "Pink Floral
+  Birthday Cake". Swipe right to add a design to the menu, left to skip. Then make a
+  **menu card**: branded pages (4:5 post or 9:16 story, 4 or 6 designs each) with names and
+  prices, saved as pictures and one PDF, ready to share on WhatsApp or Instagram.
 - **Photo studio:** edit one photo at a time.
   - Remove the background and put the cake on a colour, gradient, blurred original or one of
     your brand backgrounds, with an optional soft shadow.
