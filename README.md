@@ -29,6 +29,22 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   bottom navigation (Home · Gallery · Create · Settings), a first-run intro, a Home page with
   your numbers and shortcuts, a full-screen photo viewer, and a Create hub where you pick a tool
   and then the photos.
+- **Orders and Google Calendar:**
+  - A short **order setup** runs after the intro (and is editable in Settings):
+    - how customers reach you (WhatsApp, Facebook, Instagram, email, booking page link)
+    - advance %, how to pay, cancellation days, minimum notice, delivery
+    - which questions your order form asks, including your own
+    - which calendar to schedule orders in
+  - **Orders tab** with upcoming orders by day. Each order has customer, date and time,
+    pickup or delivery, design, size, flavour, design level, options, details, price and status.
+  - **Share → CakeSync:** long-press a customer's message in WhatsApp, Messenger or email and
+    share it to CakeSync; the filled-in order form becomes a draft order.
+  - **Automatic prices** from your menu (flavour × size, design level, Eggless +20%, extras),
+    and **Send quote** with the total, advance and cancellation terms.
+  - Every order is **scheduled in your calendar** (your Google Calendar, synced by Android) with
+    reminders a day and 3 hours before, and updated when the order changes. Bookings already in
+    the calendar can be turned into orders.
+  - **Order form** to send to customers, built from your questions.
 - **Menu builder:**
   - A price list per category: flavours × sizes (e.g. 6", 8", 10", 12" with servings), from a
     template (round cakes, cupcake packs, by weight) or pasted straight from your website's

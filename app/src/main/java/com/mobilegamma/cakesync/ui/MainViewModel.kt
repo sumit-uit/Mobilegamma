@@ -21,6 +21,14 @@ import com.mobilegamma.cakesync.edit.ColorFilterPreset
 import com.mobilegamma.cakesync.edit.Music
 import com.mobilegamma.cakesync.edit.ReelOptions
 import com.mobilegamma.cakesync.menu.CardEntry
+import com.mobilegamma.cakesync.orders.Booking
+import com.mobilegamma.cakesync.orders.CalendarSync
+import com.mobilegamma.cakesync.orders.Order
+import com.mobilegamma.cakesync.orders.OrderMessage
+import com.mobilegamma.cakesync.orders.OrderSettings
+import com.mobilegamma.cakesync.orders.OrderStore
+import com.mobilegamma.cakesync.orders.PhoneCalendar
+import com.mobilegamma.cakesync.orders.Quote
 import com.mobilegamma.cakesync.menu.CardOptions
 import com.mobilegamma.cakesync.menu.ColourNames
 import com.mobilegamma.cakesync.menu.DesignGrouper
@@ -103,6 +111,13 @@ data class UiState(
     val menuNewCount: Int = 0,
     /** The menu screen's data while it is open. */
     val menu: MenuUi? = null,
+    val orders: List<Order> = emptyList(),
+    val orderSettings: OrderSettings = OrderSettings(),
+    /** The order open in the editor. */
+    val editingOrder: Order? = null,
+    val ordersSetupOpen: Boolean = false,
+    /** Calendar events that could be imported as orders. */
+    val bookings: List<Booking> = emptyList(),
     /** Whether the first-run introduction still needs showing (null = not loaded yet). */
     val showIntro: Boolean? = null,
 )
@@ -112,18 +127,23 @@ data class Suggestion(val photos: List<Photo>, val hero: Photo, val title: Strin
 
 data class MenuUi(val data: MenuData, val suggestions: List<Suggestion>, val loading: Boolean = false)
 
+/** Ways to send a message to a customer. */
+enum class Channel(val label: String) { WHATSAPP("WhatsApp"), SMS("Text message"), EMAIL("Email"), OTHER("Other apps…") }
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = Settings(app)
     private val categories = Categories(app)
     private val store = PhotoStore.get(app)
     private val auth = DriveAuth(app)
     private val menuStore = MenuStore(app)
+    private val orderStore = OrderStore(app)
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
         refresh()
+        loadOrders()
         viewModelScope.launch {
             WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(SyncScheduler.NOW).collect { infos ->
                 val running = infos.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
@@ -182,6 +202,125 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val createdCount: Int,
         val newDesigns: Int,
     )
+
+    // --- Orders ---
+
+    private fun loadOrders() {
+        val data = orderStore.load()
+        _state.update { it.copy(orders = data.orders, orderSettings = data.settings) }
+    }
+
+    fun saveOrderSettings(s: OrderSettings) {
+        orderStore.update { it.copy(settings = s.copy(configured = true)) }
+        _state.update { it.copy(ordersSetupOpen = false) }
+        loadOrders()
+    }
+
+    fun openOrdersSetup(open: Boolean = true) = _state.update { it.copy(ordersSetupOpen = open) }
+
+    fun phoneCalendars(): List<PhoneCalendar> = runCatching { CalendarSync.calendars(getApplication()) }.getOrDefault(emptyList())
+
+    fun newOrder() = _state.update { it.copy(editingOrder = Order(id = "o${System.currentTimeMillis()}", createdAt = System.currentTimeMillis())) }
+
+    fun editOrder(order: Order?) = _state.update { it.copy(editingOrder = order) }
+
+    /** A customer's message shared into the app becomes a draft order. */
+    fun importOrderText(text: String) {
+        val menu = menuStore.load()
+        val draft = OrderMessage.toOrder(text, orderStore.load().settings, "o${System.currentTimeMillis()}", menu.settings.extras)
+        _state.update { it.copy(editingOrder = draft, message = "Order details read from the message. Check them and save.") }
+    }
+
+    fun menuData(): MenuData = menuStore.load()
+
+    /** The total for [order]: its agreed price, else the price from the menu. */
+    fun orderTotal(order: Order, menu: MenuData = menuStore.load()): Double? =
+        Quote.total(order, menu.table(order.categoryId), menu.settings)
+
+    /** Saves the order and keeps its calendar event in step. */
+    fun saveOrder(order: Order, toCalendar: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = orderStore.load().settings
+            val menu = menuStore.load()
+            var saved = order
+            var note: String? = null
+            val calendarId = settings.calendarId
+            if (toCalendar && calendarId != null && order.due != null) {
+                val levelName = menu.settings.levels.firstOrNull { it.id == order.levelId }?.name
+                val total = orderTotal(order, menu)
+                val id = runCatching {
+                    CalendarSync.upsert(
+                        getApplication(), calendarId, order,
+                        OrderMessage.eventTitle(order, levelName),
+                        OrderMessage.eventDescription(order, total, levelName, menu.settings),
+                        settings.reminderHours,
+                    )
+                }.onFailure { note = "Saved, but the calendar said: ${it.message}" }.getOrNull()
+                saved = order.copy(calendarEventId = id ?: order.calendarEventId)
+                if (id != null) note = "Order saved and added to ${settings.calendarName.ifBlank { "your calendar" }}"
+            } else if (toCalendar && calendarId == null) {
+                note = "Order saved. Choose a calendar in order setup to schedule orders."
+            }
+            orderStore.update { d -> d.copy(orders = d.orders.filterNot { it.id == saved.id } + saved) }
+            _state.update { it.copy(editingOrder = null, message = note ?: "Order saved") }
+            loadOrders()
+        }
+    }
+
+    fun deleteOrder(order: Order) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!order.fromBooking) order.calendarEventId?.let { runCatching { CalendarSync.delete(getApplication(), it) } }
+            orderStore.update { d -> d.copy(orders = d.orders.filterNot { it.id == order.id }) }
+            _state.update { it.copy(editingOrder = null, message = "Order deleted") }
+            loadOrders()
+        }
+    }
+
+    /** Upcoming calendar events that aren't orders yet (e.g. booking-page appointments). */
+    fun loadBookings() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val data = orderStore.load()
+            val calendarId = data.settings.calendarId ?: return@launch _state.update { it.copy(bookings = emptyList()) }
+            val linked = data.orders.mapNotNull { it.calendarEventId }.toSet()
+            val list = runCatching { CalendarSync.upcoming(getApplication(), calendarId) }.getOrDefault(emptyList())
+                .filter { it.eventId !in linked && !it.description.contains("(Made with CakeSync)") }
+            _state.update { it.copy(bookings = list) }
+        }
+    }
+
+    fun importBooking(booking: Booking) {
+        val data = orderStore.load()
+        val order = CalendarSync.toOrder(booking, data.settings, "o${System.currentTimeMillis()}", menuStore.load().settings.extras)
+        _state.update { it.copy(editingOrder = order, bookings = it.bookings - booking) }
+    }
+
+    /** Sends [text] to the customer through [channel]; the text is also copied. */
+    fun sendToCustomer(order: Order, text: String, channel: Channel) {
+        val app = getApplication<Application>()
+        app.getSystemService(android.content.ClipboardManager::class.java)
+            .setPrimaryClip(android.content.ClipData.newPlainText("Order", text))
+        val digits = order.contact.filter { it.isDigit() }
+        val intent = when (channel) {
+            Channel.WHATSAPP -> if (digits.length >= 8) {
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$digits?text=" + Uri.encode(text)))
+            } else {
+                Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text).setPackage("com.whatsapp")
+            }
+            Channel.SMS -> Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${order.contact}")).putExtra("sms_body", text)
+            Channel.EMAIL -> Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + order.contact.takeIf { it.contains("@") }.orEmpty()))
+                .putExtra(Intent.EXTRA_SUBJECT, "Your cake order").putExtra(Intent.EXTRA_TEXT, text)
+            Channel.OTHER -> Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Send to customer")
+        }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val sent = runCatching { app.startActivity(intent) }.isSuccess || runCatching {
+            app.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Send")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        _state.update { it.copy(message = if (sent) "Message ready to send (also copied)" else "Copied: paste it to the customer") }
+    }
+
+    /** The blank order form to send to customers or put in a bio. */
+    fun orderFormText(design: String = ""): String =
+        OrderMessage.template(orderStore.load().settings, brandKit().businessName, design)
 
     // --- Menu ---
 
@@ -350,6 +489,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Ends the first-run introduction, optionally saving the business name. */
     fun finishIntro(businessName: String?) {
         settings.onboarded = true
+        // New bakeries set up how they take orders right after the intro.
+        if (!orderStore.load().settings.configured) _state.update { it.copy(ordersSetupOpen = true) }
         businessName?.trim()?.takeIf { it.isNotEmpty() }?.let { saveBrandKit(brandKit().copy(businessName = it)) }
         _state.update { it.copy(showIntro = false) }
     }

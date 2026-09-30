@@ -196,6 +196,19 @@ fun SettingsScreen(
             }
         }
 
+        Section("📦", "Orders") {
+            Text(orderSetupSummary(state.orderSettings), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Channels, advance and cancellation rules, the questions on your order form, and the Google Calendar " +
+                    "orders are scheduled in.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FilledTonalButton(onClick = { viewModel.openOrdersSetup() }) {
+                Text(if (state.orderSettings.configured) "Edit order setup" else "Set up orders")
+            }
+        }
+
         Section("⏰", "Daily upload") {
             SwitchRow("Upload automatically every day", s.dailySyncEnabled) {
                 viewModel.updateSettings { dailySyncEnabled = it }

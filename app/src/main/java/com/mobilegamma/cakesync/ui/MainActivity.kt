@@ -22,6 +22,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -42,9 +43,23 @@ import com.mobilegamma.cakesync.ui.theme.CakeTheme
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
+    }
+
+    /** A customer's order message shared into the app (Share → CakeSync) becomes a draft order. */
+    private fun handleShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND || intent.type?.startsWith("text/") != true) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: return
+        viewModel.importOrderText(text)
+        intent.action = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleShare(intent)
         setContent {
             setSingletonImageLoaderFactory { ctx ->
                 ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build()
@@ -55,7 +70,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** The four main pages, in bottom-bar order. */
-enum class Screen(val label: String) { HOME("Home"), GALLERY("Gallery"), CREATE("Create"), SETTINGS("Settings") }
+enum class Screen(val label: String) { HOME("Home"), GALLERY("Gallery"), ORDERS("Orders"), CREATE("Create"), SETTINGS("Settings") }
 
 @Composable
 private fun CakeSyncApp(viewModel: MainViewModel) {
@@ -234,6 +249,8 @@ private fun MainScaffold(
                     onOpenPhoto = { go(Screen.GALLERY, GridTab.MATCHES) },
                     onCreate = ::startCreate,
                     onOpenMenu = viewModel::openMenu,
+                    onOpenOrders = { screen = Screen.ORDERS },
+                    onSetUpOrders = { viewModel.openOrdersSetup() },
                 )
                 Screen.GALLERY -> GalleryScreen(
                     state = state,
@@ -243,6 +260,7 @@ private fun MainScaffold(
                     onOpenCreation = { openCreation = it },
                     onEditPhoto = { studio = it to StudioTab.FILTERS },
                 )
+                Screen.ORDERS -> OrdersScreen(state, viewModel)
                 Screen.CREATE -> CreateScreen(
                     createdCount = state.createdCount,
                     onPick = ::startCreate,
@@ -270,6 +288,8 @@ private fun MainScaffold(
         )
     }
     if (state.menu != null) MenuScreen(state, viewModel, onClose = viewModel::closeMenu)
+    state.editingOrder?.let { OrderEditor(it, state, viewModel) }
+    if (state.ordersSetupOpen) OrderSetupWizard(state, viewModel)
     studio?.let { (photo, tab) ->
         StudioScreen(photo = photo, startTab = tab, viewModel = viewModel) {
             studio = null
@@ -281,6 +301,7 @@ private fun MainScaffold(
 private fun Screen.icon(): ImageVector = when (this) {
     Screen.HOME -> Icons.Filled.Home
     Screen.GALLERY -> AppIcons.Gallery
+    Screen.ORDERS -> Icons.Filled.DateRange
     Screen.CREATE -> AppIcons.Sparkle
     Screen.SETTINGS -> Icons.Filled.Settings
 }

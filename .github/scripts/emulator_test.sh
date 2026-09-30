@@ -518,6 +518,75 @@ fi
 nav Home || true
 shot 09f-home-menu-banner
 
+echo "== Orders: setup wizard, share a customer message in, schedule in the calendar, import a booking"
+orders_ok=1
+adb shell pm grant "$PKG" android.permission.READ_CALENDAR || true
+adb shell pm grant "$PKG" android.permission.WRITE_CALENDAR || true
+# The emulator has no Google account, so make a local calendar to stand in for Google Calendar.
+adb shell "content insert --uri 'content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=cakesync.test&account_type=LOCAL' --bind account_name:s:cakesync.test --bind account_type:s:LOCAL --bind name:s:CakeOrders --bind calendar_displayName:s:CakeOrders --bind calendar_access_level:i:700 --bind ownerAccount:s:cakesync.test --bind visible:i:1 --bind sync_events:i:1 --bind calendar_timezone:s:UTC" || echo "could not create a test calendar"
+cal_id=$(adb shell "content query --uri content://com.android.calendar/calendars --projection _id:calendar_displayName" | grep "CakeOrders" | grep -oE "_id=[0-9]+" | cut -d= -f2 | head -1 || true)
+echo "test calendar id: ${cal_id:-none}"
+if [ -n "$cal_id" ]; then
+  start=$(( ($(date +%s) + 3 * 86400) * 1000 ))
+  adb shell "content insert --uri content://com.android.calendar/events --bind calendar_id:l:$cal_id --bind 'title:s:Meera cake booking' --bind dtstart:l:$start --bind dtend:l:$(( start + 3600000 )) --bind eventTimezone:s:UTC --bind 'description:s:Flavour: Vanilla'" || true
+fi
+nav Orders || true
+shot 10-orders-empty
+if tap_text "Set up orders"; then
+  sleep 2
+  shot 10a-setup-channels
+  tap_exact "Next" || true; sleep 1
+  shot 10b-setup-policy
+  tap_exact "Next" || true; sleep 1
+  shot 10c-setup-questions
+  tap_exact "Next" || true; sleep 2
+  tap_exact "CakeOrders" || tap_text "Allow calendar access" || true
+  sleep 2
+  shot 10d-setup-calendar
+  tap_exact "Finish" || true
+  sleep 2
+fi
+msg='Hi! I would like to order a cake:
+Name: Priya Test
+Phone: 4165550100
+Design: Pink Floral Cake
+Size: 6"
+Flavour: Vanilla
+Eggless: yes
+Message on cake: Happy Birthday
+Date needed: tomorrow
+Pickup / delivery time: 5 pm'
+adb shell "am start -a android.intent.action.SEND -t text/plain -n $PKG/.ui.MainActivity --es android.intent.extra.TEXT '$msg'" >/dev/null
+sleep 4
+shot 10e-order-from-message
+tap_exact "Save" || true
+sleep 4
+adb exec-out run-as "$PKG" cat files/orders.json > "$OUT/orders.json" 2>/dev/null || true
+if grep -q "Priya Test" "$OUT/orders.json"; then echo "PASS: shared message saved as an order"; orders_ok=0; else echo "FAIL: order from message not saved"; fi
+if adb shell "content query --uri content://com.android.calendar/events --projection title" | grep -q "Priya Test"; then
+  echo "PASS: order scheduled in the calendar"
+else
+  echo "NOTE: order not found in the calendar"
+fi
+nav Orders || true
+shot 10f-orders-list
+if tap_text "From calendar"; then
+  sleep 3
+  shot 10g-calendar-bookings
+  if tap_text "Meera"; then
+    sleep 3
+    shot 10h-order-from-booking
+    tap_exact "Save" || true
+    sleep 3
+    adb exec-out run-as "$PKG" cat files/orders.json > "$OUT/orders.json" 2>/dev/null || true
+    if grep -q "Meera" "$OUT/orders.json"; then echo "PASS: calendar booking imported as an order"; else echo "NOTE: booking not imported"; fi
+  else
+    tap_text "Close" || true
+  fi
+fi
+nav Home || true
+shot 10i-home-this-week
+
 echo "== Filter: select a photo, preview a filter, save"
 filter_ok=1
 nav Gallery || true
@@ -648,6 +717,9 @@ if [ "${matches:-0}" -lt 1 ]; then
 fi
 if [ "$created_ok" -ne 0 ]; then
   echo "FAIL: Created tab check"; exit 1
+fi
+if [ "$orders_ok" -ne 0 ]; then
+  echo "FAIL: orders check"; exit 1
 fi
 if [ "$menu_ok" -ne 0 ]; then
   echo "FAIL: menu check"; exit 1

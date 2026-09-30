@@ -42,6 +42,8 @@ fun HomeScreen(
     onOpenPhoto: (Photo) -> Unit,
     onCreate: (EditAction) -> Unit,
     onOpenMenu: () -> Unit,
+    onOpenOrders: () -> Unit,
+    onSetUpOrders: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -95,6 +97,8 @@ fun HomeScreen(
                 }
             }
         }
+
+        OrdersCard(state, onOpenOrders, onSetUpOrders)
 
         if (state.menuNewCount > 0) {
             Card(
@@ -232,5 +236,41 @@ private fun SectionHeader(title: String, action: String?, onAction: () -> Unit) 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
         if (action != null) TextButton(onClick = onAction) { Text(action) }
+    }
+}
+
+/** This week's orders at a glance, or a prompt to set orders up. */
+@Composable
+private fun OrdersCard(state: UiState, onOpen: () -> Unit, onSetUp: () -> Unit) {
+    val today = java.time.LocalDate.now()
+    val week = state.orders.filter { o -> o.status.active && o.due != null && !o.due.isBefore(today) && o.due.isBefore(today.plusDays(7)) }
+        .sortedWith(compareBy({ it.due }, { it.time }))
+    if (!state.orderSettings.configured && state.orders.isEmpty()) {
+        Card(onClick = onSetUp, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer), shape = MaterialTheme.shapes.large) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("📦", fontSize = 28.sp)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text("Set up orders", style = MaterialTheme.typography.titleMedium)
+                    Text("Order form, quotes and Google Calendar scheduling", style = MaterialTheme.typography.bodySmall)
+                }
+                Text("›", fontSize = 28.sp)
+            }
+        }
+        return
+    }
+    Card(onClick = onOpen, shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("📅 This week", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text("${week.size} order(s)", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            }
+            if (week.isEmpty()) Text("No orders due in the next 7 days.", style = MaterialTheme.typography.bodySmall)
+            week.take(4).forEach { o ->
+                Text(
+                    "${com.mobilegamma.cakesync.orders.OrderDates.pretty(o.due!!)} · ${o.customer.ifBlank { "Customer" }} · ${o.size} ${o.flavour}".trim(),
+                    style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
