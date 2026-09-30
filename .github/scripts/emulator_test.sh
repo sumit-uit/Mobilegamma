@@ -450,8 +450,9 @@ for x, y in seen[:2]: print(x, y)
   echo "tiles to tap: $tiles"
   while read -r x y; do
     [ -n "$x" ] || continue
-    adb shell input tap "$x" "$y"; sleep 1
+    adb shell input tap "$x" "$y"; sleep 2
   done <<< "$tiles"
+  adb logcat -d -s CakeSync | tail -5
   shot 05p3-picked
   if tap_text "Continue:"; then
     sleep 5

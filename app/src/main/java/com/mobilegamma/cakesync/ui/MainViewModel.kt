@@ -262,8 +262,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Long-press: start or extend a selection. */
-    fun toggleSelected(photo: Photo) = _state.update {
-        it.copy(selected = if (photo.mediaId in it.selected) it.selected - photo.mediaId else it.selected + photo.mediaId)
+    fun toggleSelected(photo: Photo) {
+        _state.update {
+            it.copy(selected = if (photo.mediaId in it.selected) it.selected - photo.mediaId else it.selected + photo.mediaId)
+        }
+        android.util.Log.d("CakeSync", "toggleSelected ${photo.mediaId}: ${_state.value.selected.size} selected")
     }
 
     fun clearSelection() = _state.update { it.copy(selected = emptySet()) }
