@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<!-- Privacy: this page may not load or send anything. What the customer types leaves the phone
+     only when they tap Send, straight to the bakery's WhatsApp, email or chat. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Cake order form</title>
 <meta name="description" content="Order a cake: pick a size, flavour and date, then send it to the bakery.">
 <style>
