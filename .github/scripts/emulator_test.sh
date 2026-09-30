@@ -67,7 +67,7 @@ hide_keyboard() {
 tap_text() {
   local pos
   pos=$(find_text "$1")
-  if [ -z "$pos" ]; then echo "Could not find '$1' on screen"; shot "missing-$(echo "$1" | tr ' ' '_')"; return 1; fi
+  if [ -z "$pos" ]; then echo "Could not find '$1' on screen"; shot "missing-$(echo "$1" | tr ' :' '__')"; return 1; fi
   echo "tap '$1' at $pos"
   adb shell input tap $pos
 }
@@ -441,8 +441,9 @@ for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
     b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
     if t and b and re.search(r"[0-9]+%,", t.group(1)):
         x1, y1, x2, y2 = map(int, b.groups())
-        c = ((x1 + x2) // 2, (y1 + y2) // 2 - 150)
-        if c not in seen: seen.append(c)
+        if y2 - y1 > 120: continue          # only the one-line caption under a tile
+        c = ((x1 + x2) // 2, y1 - 120)      # a point inside the photo above it
+        if all(abs(c[0] - x) > 150 or abs(c[1] - y) > 150 for x, y in seen): seen.append(c)
 for x, y in seen[:2]: print(x, y)
 ')
   while read -r x y; do
