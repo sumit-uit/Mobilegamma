@@ -486,7 +486,7 @@ private fun MenuCardDialog(data: MenuData, viewModel: MainViewModel, onDismiss: 
                 TextButton(enabled = !working && entries != null, onClick = {
                     working = true
                     viewModel.exportMenuCard(options) { images, pdf -> working = false; result = images to pdf }
-                }) { Text(if (working) "Saving…" else "Save & share") }
+                }) { Text(if (working) "Saving…" else "Save and share") }
             } else {
                 TextButton(onClick = onDismiss) { Text("Done") }
             }

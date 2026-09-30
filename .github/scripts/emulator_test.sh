@@ -294,7 +294,7 @@ if scroll_to_text "Business name"; then
   shot 05i-brand-kit
   if scroll_to_text "Tagline"; then
     tap_text "Tagline" && adb shell input text "Custom%scakes%sPune"; sleep 1; hide_keyboard
-    tap_text "Instagram" && adb shell input text "sonibakes"; sleep 1; hide_keyboard
+    scroll_to_text "Instagram" && tap_text "Instagram" && adb shell input text "sonibakes"; sleep 1; hide_keyboard
     scroll_to_text "Save text" && tap_text "Save text"
     sleep 1
   fi
@@ -499,7 +499,7 @@ if tap_text "Names, prices"; then
   if tap_text "Menu card"; then
     sleep 6
     shot 09d-menu-card-dialog
-    tap_text "Save & share" || true
+    tap_text "Save and share" || true
     sleep 12
     shot 09e-menu-card-saved
     n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "CakeSync_menu_" || true)

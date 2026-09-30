@@ -107,6 +107,11 @@ object ColourNames {
         val min = minOf(r, g, b) / 255f
         val v = max
         val s = if (max == 0f) 0f else (max - min) / max
+        // Cream and ivory icing reads as white, not yellow.
+        if (s < 0.35f && v > 0.75f) {
+            val hue = hueOf(r, g, b)
+            if (hue in 20f..70f || s < 0.18f) return "White"
+        }
         if (s < 0.18f) return when {
             v > 0.78f -> "White"
             v < 0.2f -> "Black"
@@ -135,6 +140,22 @@ object ColourNames {
         }
     }
 
+    private fun hueOf(r: Int, g: Int, b: Int): Float {
+        val rf = r / 255f
+        val gf = g / 255f
+        val bf = b / 255f
+        val max = maxOf(rf, gf, bf)
+        val d = max - minOf(rf, gf, bf)
+        if (d == 0f) return 0f
+        var h = when (max) {
+            rf -> 60f * (((gf - bf) / d) % 6f)
+            gf -> 60f * (((bf - rf) / d) + 2f)
+            else -> 60f * (((rf - gf) / d) + 4f)
+        }
+        if (h < 0) h += 360f
+        return h
+    }
+
     /** The most common named colour among [pixels] (ARGB ints), ignoring black backgrounds. */
     fun dominant(pixels: IntArray): String? = pixels.asSequence()
         .mapNotNull { p -> name((p shr 16) and 0xFF, (p shr 8) and 0xFF, p and 0xFF) }
@@ -159,7 +180,7 @@ object MenuNamer {
 
     /** e.g. "Pink Floral Birthday Cake". [labels] are (label, confidence). */
     fun title(labels: List<Pair<String, Float>>, colour: String?, categoryName: String): String {
-        val seen = labels.filter { it.second >= 0.5f }.map { it.first.lowercase() }
+        val seen = labels.filter { it.second >= 0.6f }.map { it.first.lowercase() }
         fun find(table: List<Pair<String, List<String>>>) =
             table.firstOrNull { (_, words) -> seen.any { label -> words.any { label == it || label.contains(it) } } }?.first
         val decoration = find(decorations)

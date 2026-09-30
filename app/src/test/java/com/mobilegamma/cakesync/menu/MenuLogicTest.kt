@@ -38,6 +38,8 @@ class MenuLogicTest {
     @Test
     fun namesColours() {
         assertEquals("White", ColourNames.name(250, 248, 245))
+        assertEquals("White", ColourNames.name(245, 235, 200)) // cream icing
+        assertEquals("Yellow", ColourNames.name(240, 200, 40))
         assertEquals("Pink", ColourNames.name(250, 180, 200))
         assertEquals("Red", ColourNames.name(200, 20, 30))
         assertEquals("Chocolate", ColourNames.name(110, 60, 30))
@@ -50,7 +52,7 @@ class MenuLogicTest {
 
     @Test
     fun buildsDesignNames() {
-        val labels = listOf("Cake" to 0.95f, "Flower" to 0.7f, "Party" to 0.6f, "Toy" to 0.3f)
+        val labels = listOf("Cake" to 0.95f, "Flower" to 0.7f, "Party" to 0.65f, "Toy" to 0.55f)
         assertEquals("Pink Floral Birthday Cake", MenuNamer.title(labels, "Pink", "Cake"))
         assertEquals("Classic Cupcake", MenuNamer.title(listOf("Food" to 0.9f), null, "Cupcake"))
         // Colour that repeats the decoration isn't doubled.
