@@ -528,11 +528,11 @@ cal_id=$(adb shell "content query --uri content://com.android.calendar/calendars
 echo "test calendar id: ${cal_id:-none}"
 if [ -n "$cal_id" ]; then
   start=$(( ($(date +%s) + 3 * 86400) * 1000 ))
-  adb shell "content insert --uri content://com.android.calendar/events --bind calendar_id:l:$cal_id --bind 'title:s:Meera cake booking' --bind dtstart:l:$start --bind dtend:l:$(( start + 3600000 )) --bind eventTimezone:s:UTC --bind 'description:s:Flavour: Vanilla'" || true
+  adb shell "content insert --uri content://com.android.calendar/events --bind calendar_id:l:$cal_id --bind 'title:s:Meera cake booking' --bind dtstart:l:$start --bind dtend:l:$(( start + 3600000 )) --bind eventTimezone:s:UTC --bind 'description:s:Vanilla 8 inch'" || true
 fi
 nav Orders || true
 shot 10-orders-empty
-if tap_text "Set up orders"; then
+if tap_exact "Set up orders"; then
   sleep 2
   shot 10a-setup-channels
   tap_exact "Next" || true; sleep 1

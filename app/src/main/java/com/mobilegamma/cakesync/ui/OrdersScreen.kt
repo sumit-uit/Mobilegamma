@@ -66,7 +66,7 @@ fun OrdersScreen(state: UiState, viewModel: MainViewModel) {
         item { ScreenTitle("Orders", "Every order, scheduled in your calendar") }
         if (!settings.configured) {
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), shape = MaterialTheme.shapes.large) {
+                Card(onClick = { viewModel.openOrdersSetup() }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), shape = MaterialTheme.shapes.large) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("📦 Set up orders (2 minutes)", style = MaterialTheme.typography.titleMedium)
                         Text(
@@ -390,8 +390,12 @@ private fun ChipRow(label: String, options: List<Pair<String, String>>, selected
 
 @Composable
 fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
-    var s by remember { mutableStateOf(state.orderSettings) }
     var calendars by remember { mutableStateOf(viewModel.phoneCalendars()) }
+    // Calendar access already granted: start with the first (Google) calendar picked.
+    var s by remember {
+        val first = calendars.firstOrNull()
+        mutableStateOf(state.orderSettings.let { o -> if (o.calendarId == null && first != null) o.copy(calendarId = first.id, calendarName = first.name) else o })
+    }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         calendars = viewModel.phoneCalendars()
         calendars.firstOrNull()?.let { c -> if (s.calendarId == null) s = s.copy(calendarId = c.id, calendarName = c.name) }
