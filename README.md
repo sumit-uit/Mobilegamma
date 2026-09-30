@@ -29,12 +29,16 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   bottom navigation (Home · Gallery · Create · Settings), a first-run intro, a Home page with
   your numbers and shortcuts, a full-screen photo viewer, and a Create hub where you pick a tool
   and then the photos.
-- **Menu builder:** set prices once per category (per kg with sizes, or per piece and box),
-  plus an extra for themed or custom designs. New photos are grouped into designs (photos of
-  the same cake) and named automatically from what the scanner sees, e.g. "Pink Floral
-  Birthday Cake". Swipe right to add a design to the menu, left to skip. Then make a
-  **menu card**: branded pages (4:5 post or 9:16 story, 4 or 6 designs each) with names and
-  prices, saved as pictures and one PDF, ready to share on WhatsApp or Instagram.
+- **Menu builder:**
+  - A price list per category: flavours × sizes (e.g. 6", 8", 10", 12" with servings), from a
+    template (round cakes, cupcake packs, by weight) or pasted straight from your website's
+    price list.
+  - Design levels with "from" prices (e.g. Fondant from $80, 3D topper from $120, Two-tier
+    from $150), plus options and extras (Eggless +20%, edible image $15 per page).
+  - New photos are grouped into designs (only near-identical shots), with the best photo as
+    the cover. Tap another photo to make it the cover, or split a group. Swipe to add or skip.
+  - **Menu card:** branded design pages with "from" prices, plus a price-list page (flavour ×
+    size table, design levels, extras, terms), saved as pictures and one PDF to share.
 - **Photo studio:** edit one photo at a time.
   - Remove the background and put the cake on a colour, gradient, blurred original or one of
     your brand backgrounds, with an optional soft shadow.

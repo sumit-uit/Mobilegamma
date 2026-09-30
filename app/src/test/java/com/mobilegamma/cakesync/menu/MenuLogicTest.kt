@@ -16,23 +16,52 @@ class MenuLogicTest {
         assertEquals("Rs 1,200", Pricing.format(1200.0, "Rs"))
     }
 
+    private val cakes = PriceTable(
+        "cake",
+        listOf(SizeCol("6\"", "8–10"), SizeCol("8\""), SizeCol("10\""), SizeCol("12\"")),
+        listOf(
+            FlavourRow("Vanilla", listOf(60.0, 75.0, 95.0, 120.0)),
+            FlavourRow("Rasmalai", listOf(75.0, 100.0, 130.0, 160.0)),
+        ),
+    )
+
     @Test
-    fun perKgPricesWithThemeExtra() {
-        val card = PriceCard("cake", PriceMode.PER_KG, price = 800.0, sizes = listOf(2.0, 0.5, 1.0), themeExtra = 300.0)
-        assertEquals(listOf("0.5 kg" to 400.0, "1 kg" to 800.0, "2 kg" to 1600.0), Pricing.options(card, Tier.STANDARD, null))
-        assertEquals("from ₹700", Pricing.summary(card, Tier.THEME, null, "₹"))
-        assertEquals("0.5 kg ₹400 · 1 kg ₹800 · 2 kg ₹1,600", Pricing.details(card, Tier.STANDARD, null, "₹"))
-        // A fixed price wins over the rules.
-        assertEquals("₹2,500", Pricing.summary(card, Tier.THEME, 2500.0, "₹"))
-        // No price set yet.
-        assertNull(Pricing.summary(PriceCard("cake"), Tier.STANDARD, null, "₹"))
+    fun designPricesFromTableOrLevel() {
+        val settings = MenuSettings(currency = "$", levels = listOf(DesignLevel("simple", "Simple"), DesignLevel("fondant", "Fondant", 80.0)))
+        val item = MenuItem("d1", "Pink Cake", "cake", listOf(1), 1, "uri")
+        assertEquals("from $60", Pricing.summary(item, cakes, settings))
+        assertEquals("from $80", Pricing.summary(item.copy(levelId = "fondant"), cakes, settings))
+        assertEquals("$150", Pricing.summary(item.copy(priceOverride = 150.0), cakes, settings))
+        assertNull(Pricing.summary(item, PriceTable("cake"), settings))
+        assertEquals("6\" $60 · 8\" $75 · 10\" $95 · 12\" $120", Pricing.rowText(cakes, cakes.flavours[0], "$"))
+        assertEquals(75.5, Pricing.parsePrice("$75.50")!!, 1e-9)
+        assertNull(Pricing.parsePrice(""))
     }
 
     @Test
-    fun boxesForCupcakes() {
-        val card = PriceCard("cup", PriceMode.EACH, price = 60.0, sizes = listOf(1.0, 6.0, 12.0))
-        assertEquals("1 piece ₹60 · Box of 6 ₹360 · Box of 12 ₹720", Pricing.details(card, Tier.STANDARD, null, "₹"))
-        assertEquals(listOf(0.5, 1.0, 2.0), Pricing.parseSizes("2, 0.5 ,1, x, -3, 1"))
+    fun parsesAPastedCakePriceList() {
+        val text = listOf(
+            "Cake specialties",
+            "Starting price for simple round cake designs, with egg.",
+            "Flavour 6\" 8\" 10\"",
+            "12\"",
+            "Rasmalai \$75 \$100 \$130 \$160",
+            "Pineapple \$70 \$85 \$110 \$140",
+            "Butterscotch \$70 \$85 \$110 \$130",
+            "Rabri Falooda \$95 \$120 \$155 \$200",
+        ).joinToString("\n")
+        val (sizes, rows) = PriceListParser.parse(text)
+        assertEquals(listOf("6\"", "8\"", "10\"", "12\""), sizes.map { it.label })
+        assertEquals(listOf("Rasmalai", "Pineapple", "Butterscotch", "Rabri Falooda"), rows.map { it.name })
+        assertEquals(listOf(95.0, 120.0, 155.0, 200.0), rows.last().prices)
+    }
+
+    @Test
+    fun parsesCupcakePacks() {
+        val (sizes, rows) = PriceListParser.parse("Rasmalai - 6 \$50\nVanilla - 12 \$40\nChocolate - 12 \$40")
+        assertEquals(listOf("6 pcs", "12 pcs"), sizes.map { it.label })
+        assertEquals(listOf(50.0, null), rows.first { it.name == "Rasmalai" }.prices)
+        assertEquals(listOf(null, 40.0), rows.first { it.name == "Vanilla" }.prices)
     }
 
     @Test

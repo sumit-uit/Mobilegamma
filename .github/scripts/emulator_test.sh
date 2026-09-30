@@ -484,8 +484,10 @@ nav Create || true
 if tap_text "Names, prices"; then
   sleep 4
   shot 09-menu-prices
-  if tap_text "Price per kg"; then
-    adb shell input text "800"; sleep 1; hide_keyboard
+  if tap_text "Round cakes"; then
+    sleep 2
+    tap_exact "\$" && { adb shell input text "60"; sleep 1; hide_keyboard; }
+    shot 09a-menu-price-table
   fi
   scroll_to_text "Save prices" && tap_text "Save prices"
   sleep 2
@@ -504,7 +506,9 @@ if tap_text "Names, prices"; then
     shot 09e-menu-card-saved
     n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "CakeSync_menu_" || true)
     echo "menu card pages: $n"
-    if [ "${n:-0}" -ge 1 ]; then echo "PASS: menu card saved"; menu_ok=0; else echo "FAIL: no menu card saved"; fi
+    if [ "${n:-0}" -ge 2 ]; then echo "PASS: menu card saved with a price-list page"; menu_ok=0
+    elif [ "${n:-0}" -ge 1 ]; then echo "PASS: menu card saved (no price-list page)"; menu_ok=0
+    else echo "FAIL: no menu card saved"; fi
     tap_text "Done" || adb shell input keyevent KEYCODE_BACK
     sleep 1
   fi

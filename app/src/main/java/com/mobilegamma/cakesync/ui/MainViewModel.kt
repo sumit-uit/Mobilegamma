@@ -31,9 +31,8 @@ import com.mobilegamma.cakesync.menu.MenuItem
 import com.mobilegamma.cakesync.menu.MenuNamer
 import com.mobilegamma.cakesync.menu.MenuSettings
 import com.mobilegamma.cakesync.menu.MenuStore
-import com.mobilegamma.cakesync.menu.PriceCard
-import com.mobilegamma.cakesync.menu.Pricing
-import com.mobilegamma.cakesync.menu.Tier
+import com.mobilegamma.cakesync.menu.NamedTable
+import com.mobilegamma.cakesync.menu.PriceTable
 import com.mobilegamma.cakesync.edit.Creations
 import com.mobilegamma.cakesync.edit.PhotoEditor
 import com.mobilegamma.cakesync.edit.ReelMaker
@@ -206,22 +205,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val groups = designGroups(store.matches(), data).take(40)
                 val taken = data.items.map { it.title }.toMutableSet()
                 val suggestions = groups.map { photos ->
-                    val heroInput = DesignGrouper.hero(photos.map { DesignInput(it.mediaId, it.takenAtMillis, null, it.sharpness, it.orderTag) })
-                    val hero = photos.first { it.mediaId == heroInput.id }
-                    val labels = photos.flatMap { PhotoStore.parseLabels(it.labels) }
-                        .groupBy({ it.first }, { it.second }).map { (k, v) -> k to v.max() }
-                    val colour = runCatching {
-                        val bmp = PhotoEditor.loadScaled(getApplication(), hero.uri, 64)
-                        val x0 = bmp.width / 5
-                        val y0 = bmp.height / 5
-                        val w = bmp.width - 2 * x0
-                        val h = bmp.height - 2 * y0
-                        val px = IntArray(w * h)
-                        bmp.getPixels(px, 0, w, x0, y0, w, h)
-                        ColourNames.dominant(px)
-                    }.getOrNull()
-                    val categoryName = categories.byId(hero.category)?.name ?: "Cake"
-                    val title = MenuNamer.unique(MenuNamer.title(labels, colour, singular(categoryName)), taken)
+                    val hero = bestPhoto(photos)
+                    val title = MenuNamer.unique(nameFor(photos, hero), taken)
                     taken += title
                     Suggestion(photos, hero, title, hero.category)
                 }
@@ -229,6 +214,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             _state.update { it.copy(menu = ui) }
         }
+    }
+
+    /**
+     * The best photo of a design for the menu: clearly cake (label score), sharp, and not a
+     * near-duplicate or a photo with people in it.
+     */
+    private fun bestPhoto(photos: List<Photo>): Photo {
+        val sharpest = photos.maxOf { it.sharpness ?: 0.0 }.takeIf { it > 0 } ?: 1.0
+        return photos.maxBy { p ->
+            p.score + 0.6 * ((p.sharpness ?: 0.0) / sharpest) - (if (p.duplicate) 0.5 else 0.0) - (if (p.hasPeople) 1.0 else 0.0)
+        }
+    }
+
+    /** A generated name for a design, from its labels and its cover photo's main colour. */
+    private fun nameFor(photos: List<Photo>, hero: Photo): String {
+        val labels = photos.flatMap { PhotoStore.parseLabels(it.labels) }
+            .groupBy({ it.first }, { it.second }).map { (k, v) -> k to v.max() }
+        val colour = runCatching {
+            val bmp = PhotoEditor.loadScaled(getApplication(), hero.uri, 64)
+            val x0 = bmp.width / 5
+            val y0 = bmp.height / 5
+            val w = bmp.width - 2 * x0
+            val h = bmp.height - 2 * y0
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, x0, y0, w, h)
+            ColourNames.dominant(px)
+        }.getOrNull()
+        val categoryName = categories.byId(hero.category)?.name ?: "Cake"
+        return MenuNamer.title(labels, colour, singular(categoryName))
+    }
+
+    /** Uses [photo] as the cover of a suggested design. */
+    fun setCover(suggestion: Suggestion, photo: Photo) = replaceSuggestion(suggestion) { listOf(it.copy(hero = photo)) }
+
+    /** Splits a suggested design into one design per photo (they were different cakes). */
+    fun splitSuggestion(suggestion: Suggestion) {
+        viewModelScope.launch {
+            val parts = withContext(Dispatchers.IO) {
+                val taken = (_state.value.menu?.data?.items?.map { it.title }.orEmpty() +
+                    _state.value.menu?.suggestions?.map { it.title }.orEmpty()).toMutableSet()
+                suggestion.photos.map { p ->
+                    val title = MenuNamer.unique(nameFor(listOf(p), p), taken).also { taken += it }
+                    Suggestion(listOf(p), p, title, p.category)
+                }
+            }
+            replaceSuggestion(suggestion) { parts }
+        }
+    }
+
+    private fun replaceSuggestion(old: Suggestion, with: (Suggestion) -> List<Suggestion>) = _state.update { s ->
+        val menu = s.menu ?: return@update s
+        s.copy(menu = menu.copy(suggestions = menu.suggestions.flatMap { if (it == old) with(it) else listOf(it) }))
     }
 
     private fun singular(name: String) = if (name.endsWith("s") && !name.endsWith("ss")) name.dropLast(1) else name
@@ -246,7 +283,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun addDesign(suggestion: Suggestion, title: String, tier: Tier) = updateMenu(suggestion) { d ->
+    fun addDesign(suggestion: Suggestion, title: String, levelId: String) = updateMenu(suggestion) { d ->
         d.copy(items = d.items + MenuItem(
             id = "d${suggestion.hero.mediaId}",
             title = title.trim().ifBlank { suggestion.title },
@@ -254,7 +291,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             photoIds = suggestion.photos.map { it.mediaId },
             heroId = suggestion.hero.mediaId,
             heroUri = suggestion.hero.uri.toString(),
-            tier = tier,
+            levelId = levelId,
             addedAt = System.currentTimeMillis(),
         ))
     }
@@ -266,20 +303,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removeMenuItem(item: MenuItem) = updateMenu { d -> d.copy(items = d.items.filterNot { it.id == item.id }) }
 
-    fun saveMenuPrices(settings: MenuSettings, cards: List<PriceCard>) = updateMenu { d -> d.copy(settings = settings, cards = cards) }
+    fun saveMenuPrices(settings: MenuSettings, tables: List<PriceTable>) = updateMenu { d -> d.copy(settings = settings, tables = tables) }
 
     /** Renders and saves the menu card pages and PDF, then calls [onDone] with the results. */
     fun exportMenuCard(options: CardOptions, onDone: (List<Uri>, Uri?) -> Unit) {
         val data = menuStore.load()
-        if (data.items.isEmpty()) {
-            _state.update { it.copy(message = "Add some designs to your menu first") }
+        if (data.items.isEmpty() && data.tables.none { it.isSet }) {
+            _state.update { it.copy(message = "Add some designs or prices to your menu first") }
             return
         }
         viewModelScope.launch {
             _state.update { it.copy(message = "Making your menu card…") }
             val result = runCatching {
                 val entries = withContext(Dispatchers.IO) { menuEntries(data) }
-                MenuCard.export(getApplication(), entries, options, brandKit(), data.settings)
+                MenuCard.export(getApplication(), entries, options, brandKit(), data.settings, namedTables(data))
             }
             result.onSuccess { (images, pdf) ->
                 _state.update {
@@ -296,7 +333,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Menu designs with their photo and price text, for the menu card. */
     fun menuEntries(data: MenuData): List<CardEntry> = data.items.mapNotNull { item ->
         val photo = MenuCard.loadPhoto(getApplication(), item.heroUri) ?: return@mapNotNull null
-        CardEntry(item.title, Pricing.summary(data.card(item.categoryId), item.tier, item.priceOverride, data.settings.currency), photo)
+        CardEntry(item.title, data.price(item), photo)
+    }
+
+    /** Price tables with their category names, for the price-list page. */
+    fun namedTables(data: MenuData): List<NamedTable> = data.tables.filter { it.isSet }.map { t ->
+        NamedTable(categories.byId(t.categoryId)?.name ?: "Cakes", t)
     }
 
     fun shareUris(uris: List<Uri>, mime: String, target: Sharer.Target) {

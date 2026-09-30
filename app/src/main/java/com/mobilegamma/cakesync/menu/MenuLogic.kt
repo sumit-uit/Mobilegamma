@@ -3,26 +3,39 @@ package com.mobilegamma.cakesync.menu
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
-/** How a category is priced. */
-enum class PriceMode(val label: String) { PER_KG("Per kg"), EACH("Each / box") }
+/** A column of a price table, e.g. 6" (serves 8–10) or "12 pcs". */
+data class SizeCol(val label: String, val serves: String = "")
 
-/** Price tier of a design: normal, or themed/custom work that costs extra. */
-enum class Tier(val label: String) { STANDARD("Standard"), THEME("Theme / custom") }
+/** A flavour and its price for each size column (null = not offered). */
+data class FlavourRow(val name: String, val prices: List<Double?>)
 
-/**
- * A category's price rules, set once. For [PriceMode.PER_KG] [price] is per kg and [sizes]
- * are weights; for [PriceMode.EACH] [price] is per piece and [sizes] are box counts.
- */
-data class PriceCard(
+/** A category's price list: flavours down the side, sizes across the top. */
+data class PriceTable(
     val categoryId: String,
-    val mode: PriceMode = PriceMode.PER_KG,
-    val price: Double = 0.0,
-    val sizes: List<Double> = listOf(0.5, 1.0, 2.0),
-    /** Added to every size for [Tier.THEME] designs. */
-    val themeExtra: Double = 0.0,
+    val sizes: List<SizeCol> = emptyList(),
+    val flavours: List<FlavourRow> = emptyList(),
 ) {
-    val isSet: Boolean get() = price > 0.0
+    val isSet: Boolean get() = flavours.any { row -> row.prices.any { (it ?: 0.0) > 0.0 } }
+
+    /** The lowest price in the table (the "from" price), or null. */
+    fun minPrice(): Double? = flavours.flatMap { it.prices }.filterNotNull().filter { it > 0 }.minOrNull()
 }
+
+/** Ready-made table shapes to start from. */
+enum class TableTemplate(val label: String, val sizes: List<SizeCol>) {
+    ROUND("Round cakes (inches)", listOf(SizeCol("6\"", "8–10"), SizeCol("8\"", "14–18"), SizeCol("10\"", "24–28"), SizeCol("12\"", "35–40"))),
+    CUPCAKES("Cupcakes (packs)", listOf(SizeCol("6 pcs"), SizeCol("12 pcs"))),
+    PER_KG("By weight", listOf(SizeCol("0.5 kg"), SizeCol("1 kg"), SizeCol("2 kg"))),
+    ;
+
+    fun table(categoryId: String) = PriceTable(categoryId, sizes, listOf(FlavourRow("Vanilla", sizes.map { null }), FlavourRow("Chocolate", sizes.map { null })))
+}
+
+/** How elaborate a design is; [fromPrice] null means "use the price table". */
+data class DesignLevel(val id: String, val name: String, val fromPrice: Double? = null)
+
+/** An option or add-on shown on the menu, e.g. ("Eggless", "+20%") or ("Edible image", "$15 per page"). */
+data class Extra(val name: String, val price: String)
 
 /** One design on the menu: a group of photos of the same cake. */
 data class MenuItem(
@@ -32,24 +45,38 @@ data class MenuItem(
     val photoIds: List<Long>,
     val heroId: Long,
     val heroUri: String,
-    val tier: Tier = Tier.STANDARD,
-    /** A fixed price for this design instead of the category's rules. */
+    val levelId: String = DesignLevels.SIMPLE,
+    /** A fixed price for this design instead of the table / level. */
     val priceOverride: Double? = null,
     /** Blank = generated from the template. */
     val description: String = "",
     val addedAt: Long = 0L,
 )
 
+object DesignLevels {
+    const val SIMPLE = "simple"
+    val defaults = listOf(
+        DesignLevel(SIMPLE, "Simple"),
+        DesignLevel("fondant", "Fondant"),
+        DesignLevel("topper", "3D topper / custom"),
+        DesignLevel("tiered", "Two-tier"),
+    )
+}
+
 /** Menu-wide settings. */
 data class MenuSettings(
-    val currency: String = "₹",
+    val currency: String = "$",
     val title: String = "Our Cakes",
-    val note: String = "Made to order · Eggless on request · Order 48 hours ahead",
-)
+    val note: String = "Made to order · 50% advance to confirm",
+    val levels: List<DesignLevel> = DesignLevels.defaults,
+    val extras: List<Extra> = emptyList(),
+) {
+    fun level(id: String?): DesignLevel = levels.firstOrNull { it.id == id } ?: levels.firstOrNull() ?: DesignLevels.defaults.first()
+}
 
 object Pricing {
 
-    /** "₹1,600", with Indian digit grouping (1,00,000) for ₹ and Rs, otherwise 100,000. */
+    /** "$1,600", with Indian digit grouping (1,00,000) for ₹ and Rs, otherwise 100,000. */
     fun format(amount: Double, currency: String): String {
         val whole = amount.roundToLong()
         val digits = abs(whole).toString()
@@ -65,38 +92,74 @@ object Pricing {
         return "$sign$currency$space$grouped"
     }
 
-    /** "0.5 kg", "1 kg"; "1 piece", "Box of 6". */
-    fun sizeLabel(mode: PriceMode, size: Double): String = when (mode) {
-        PriceMode.PER_KG -> "${trim(size)} kg"
-        PriceMode.EACH -> if (size <= 1.0) "1 piece" else "Box of ${trim(size)}"
+    /**
+     * The price shown on a design: its fixed price, else its design level's "from" price, else
+     * the lowest price in its category's table. Null when nothing is set yet.
+     */
+    fun summary(item: MenuItem, table: PriceTable?, settings: MenuSettings): String? =
+        summary(item.levelId, item.priceOverride, table, settings)
+
+    fun summary(levelId: String?, override: Double?, table: PriceTable?, settings: MenuSettings): String? {
+        if (override != null) return format(override, settings.currency)
+        val level = settings.level(levelId)
+        val from = level.fromPrice ?: table?.minPrice() ?: return null
+        return "from ${format(from, settings.currency)}"
     }
 
-    /** Every size with its price, e.g. [("0.5 kg", 400), ("1 kg", 800)]. */
-    fun options(card: PriceCard?, tier: Tier, override: Double?): List<Pair<String, Double>> {
-        if (override != null) return listOf("Price" to override)
-        if (card == null || !card.isSet) return emptyList()
-        val extra = if (tier == Tier.THEME) card.themeExtra else 0.0
-        return card.sizes.sorted().map { size -> sizeLabel(card.mode, size) to card.price * size + extra }
-    }
+    /** "6" $60 · 8" $75 · 10" $95" for one flavour. */
+    fun rowText(table: PriceTable, row: FlavourRow, currency: String): String =
+        table.sizes.zip(row.prices).filter { it.second != null }
+            .joinToString(" · ") { (size, price) -> "${size.label} ${format(price!!, currency)}" }
 
-    /** "from ₹400", "₹1,500" or null when no price is set. */
-    fun summary(card: PriceCard?, tier: Tier, override: Double?, currency: String): String? {
-        val options = options(card, tier, override)
-        if (options.isEmpty()) return null
-        val min = options.minOf { it.second }
-        return if (options.size == 1) format(min, currency) else "from ${format(min, currency)}"
-    }
-
-    /** "0.5 kg ₹400 · 1 kg ₹800 · 2 kg ₹1,600" */
-    fun details(card: PriceCard?, tier: Tier, override: Double?, currency: String): String? =
-        options(card, tier, override).takeIf { it.isNotEmpty() }
-            ?.joinToString(" · ") { (label, price) -> if (label == "Price") format(price, currency) else "$label ${format(price, currency)}" }
-
-    /** Parses "0.5, 1, 2" into sizes; ignores anything that isn't a positive number. */
-    fun parseSizes(text: String): List<Double> =
-        text.split(',', ';', ' ').mapNotNull { it.trim().toDoubleOrNull() }.filter { it > 0 }.distinct().sorted()
+    /** Parses a price typed by the user ("75", "$75", "75.50"); null when blank or invalid. */
+    fun parsePrice(text: String): Double? = text.filter { it.isDigit() || it == '.' }.toDoubleOrNull()?.takeIf { it > 0 }
 
     fun trim(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+}
+
+/**
+ * Turns a pasted price list into a table. Understands a size header such as
+ * `Flavour 6" 8" 10" 12"` followed by rows like `Vanilla $60 $75 $95 $120`, and pack rows
+ * such as `Vanilla - 12 $40` (pack size, then price).
+ */
+object PriceListParser {
+    private val sizeToken = Regex("""(\d+(?:\.\d+)?)\s*(?:"|”|″|''|inch(?:es)?|in\b)""", RegexOption.IGNORE_CASE)
+    private val number = Regex("""(\$|₹|rs\.?\s*)?\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+
+    fun parse(text: String): Pair<List<SizeCol>, List<FlavourRow>> {
+        var sizes = mutableListOf<SizeCol>()
+        val rows = mutableListOf<Pair<String, MutableMap<String, Double>>>()
+        for (raw in text.lines()) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            val headerSizes = sizeToken.findAll(line).map { it.groupValues[1] }.toList()
+            if (headerSizes.isNotEmpty() && number.findAll(line.replace(sizeToken, "")).none()) {
+                val cols = headerSizes.map { SizeCol("$it\"") }
+                // A new header replaces the sizes; a lone size is the header wrapping onto a new line.
+                if (cols.size >= 2) sizes = cols.toMutableList() else sizes += cols
+                continue
+            }
+            val first = number.find(line) ?: continue
+            val name = line.substring(0, first.range.first).trim().trimEnd('-', '–', ':', '|').trim()
+            if (name.isEmpty() || name.any { it.isDigit() }) continue
+            val found = number.findAll(line.substring(first.range.first)).toList()
+            val values = found.map { it.groupValues[2].toDouble() }
+            val row = rows.firstOrNull { it.first.equals(name, true) } ?: (name to mutableMapOf<String, Double>()).also { rows += it }
+            val packRow = found.size == 2 && found[0].groupValues[1].isEmpty() && found[1].groupValues[1].isNotEmpty()
+            if (packRow) {
+                val label = "${Pricing.trim(values[0])} pcs"
+                if (sizes.none { it.label == label }) sizes += SizeCol(label)
+                row.second[label] = values[1]
+            } else {
+                values.forEachIndexed { i, v ->
+                    val label = sizes.getOrNull(i)?.label ?: return@forEachIndexed
+                    row.second[label] = v
+                }
+            }
+        }
+        if (sizes.any { it.label.endsWith("pcs") }) sizes = sizes.sortedBy { it.label.removeSuffix(" pcs").toDoubleOrNull() ?: 0.0 }.toMutableList()
+        return sizes to rows.map { (name, prices) -> FlavourRow(name, sizes.map { prices[it.label] }) }
+    }
 }
 
 /** Names colours from RGB (plain maths so it can be unit tested). */
@@ -222,8 +285,9 @@ data class DesignInput(
  * look-alike photos (similar dHash) taken close together.
  */
 object DesignGrouper {
-    const val MAX_DISTANCE = 16
-    const val WINDOW_MS = 45 * 60 * 1000L
+    /** Only near-identical shots count as the same design; different cakes stay apart. */
+    const val MAX_DISTANCE = 10
+    const val WINDOW_MS = 20 * 60 * 1000L
 
     fun group(inputs: List<DesignInput>, maxDistance: Int = MAX_DISTANCE, windowMs: Long = WINDOW_MS): List<List<DesignInput>> {
         val parent = IntArray(inputs.size) { it }
