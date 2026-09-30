@@ -73,7 +73,7 @@ fun Onboarding(
                         }
                         2 -> OutlinedTextField(
                             value = name, onValueChange = { name = it }, singleLine = true,
-                            label = { Text("Business name, e.g. Soni Bakes") },
+                            label = { Text("Business name, e.g. Sweet Crumbs") },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

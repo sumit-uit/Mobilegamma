@@ -461,7 +461,7 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
                             }
                             1 -> {
                                 LabeledNumber("Advance to confirm (%)", s.advancePercent) { s = s.copy(advancePercent = it.coerceIn(0, 100)) }
-                                OutlinedTextField(value = s.paymentNote, onValueChange = { s = s.copy(paymentNote = it) }, label = { Text("How to pay, e.g. Interac e-Transfer to …") }, modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(value = s.paymentNote, onValueChange = { s = s.copy(paymentNote = it) }, label = { Text("How to pay, e.g. bank transfer, UPI, e-Transfer to …") }, modifier = Modifier.fillMaxWidth())
                                 LabeledNumber("Cancel at least … days before for a full refund", s.cancelDays) { s = s.copy(cancelDays = it.coerceIn(0, 60)) }
                                 LabeledNumber("Minimum notice for orders (days)", s.leadDays) { s = s.copy(leadDays = it.coerceIn(0, 60)) }
                                 SwitchRow("I deliver", s.delivers) { s = s.copy(delivers = it) }

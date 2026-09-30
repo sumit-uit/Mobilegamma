@@ -92,7 +92,7 @@ data class BrandKit(
     /** Logo width as a fraction of the photo's shorter side. */
     val logoSize: Float,
     val logoOpacity: Float,
-    /** Shown in a small label, e.g. "Soni Bakes · @sonibakes". Blank = no label. */
+    /** Shown in a small label, e.g. "Sweet Crumbs · @sweetcrumbs". Blank = no label. */
     val businessName: String,
     val filter: ColorFilterPreset,
     /** Also brand crops and white-background copies automatically. */
@@ -102,7 +102,7 @@ data class BrandKit(
     val labelStyle: LabelStyle = LabelStyle.DARK,
     /** Optional smaller line under the name, e.g. "Custom cakes · Pune". */
     val tagline: String = "",
-    /** Optional social lines under the name, e.g. "sonibakes" → "@sonibakes". */
+    /** Optional social lines under the name, e.g. "sweetcrumbs" → "@sweetcrumbs". */
     val instagram: String = "",
     val facebook: String = "",
     val website: String = "",

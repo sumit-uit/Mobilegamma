@@ -547,7 +547,7 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
         var name by remember(brandVersion) { mutableStateOf(kit.businessName) }
         OutlinedTextField(
             value = name, onValueChange = { name = it }, singleLine = true,
-            label = { Text("Business name / handle, e.g. Soni Bakes · @sonibakes") },
+            label = { Text("Business name / handle, e.g. Sweet Crumbs · @sweetcrumbs") },
             modifier = Modifier.fillMaxWidth(),
         )
         if (name != kit.businessName) {
@@ -563,15 +563,15 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
         )
         OutlinedTextField(
             value = instagram, onValueChange = { instagram = it }, singleLine = true,
-            label = { Text("Instagram (optional), e.g. sonibakes") }, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Instagram (optional), e.g. sweetcrumbs") }, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = facebook, onValueChange = { facebook = it }, singleLine = true,
-            label = { Text("Facebook (optional), e.g. Soni Bakes") }, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Facebook (optional), e.g. Sweet Crumbs") }, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = website, onValueChange = { website = it }, singleLine = true,
-            label = { Text("Website (optional), e.g. sonibakes.in") }, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Website (optional), e.g. sweetcrumbs.com") }, modifier = Modifier.fillMaxWidth(),
         )
         if (tagline != kit.tagline || instagram != kit.instagram || facebook != kit.facebook || website != kit.website) {
             Button(onClick = {

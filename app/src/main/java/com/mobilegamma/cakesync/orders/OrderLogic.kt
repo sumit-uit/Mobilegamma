@@ -43,7 +43,7 @@ data class OrderSettings(
     val instagram: String = "",
     val email: String = "",
     val advancePercent: Int = 50,
-    /** How to pay the advance, e.g. "Interac e-Transfer to orders@example.com". */
+    /** How to pay the advance, e.g. "Bank transfer to orders@example.com". */
     val paymentNote: String = "",
     val cancelDays: Int = 4,
     val leadDays: Int = 3,
