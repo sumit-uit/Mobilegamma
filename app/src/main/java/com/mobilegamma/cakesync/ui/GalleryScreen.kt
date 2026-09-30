@@ -42,6 +42,7 @@ fun GalleryScreen(
     pendingAction: EditAction?,
     onCancelPending: () -> Unit,
     onOpenCreation: (Photo) -> Unit,
+    onEditPhoto: (Photo) -> Unit,
 ) {
     val categories = state.settings?.categories.orEmpty()
     val created = state.tab == GridTab.CREATED
@@ -107,8 +108,12 @@ fun GalleryScreen(
             if (created) {
                 PhotoTile(
                     photo = photo, excludePeople = false, skipDuplicates = false, categoryName = null,
-                    selected = false, created = true,
-                    onClick = { onOpenCreation(photo) }, onLongClick = { onOpenCreation(photo) },
+                    selected = photo.mediaId in state.selected, created = true,
+                    onClick = { if (state.selected.isNotEmpty()) viewModel.toggleSelected(photo) else onOpenCreation(photo) },
+                    onLongClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.toggleSelected(photo)
+                    },
                 )
             } else {
                 val categoryName = if (categories.size > 1) categories.firstOrNull { it.id == photo.category }?.name else null
@@ -137,6 +142,7 @@ fun GalleryScreen(
             onToggle = { viewModel.toggle(current) },
             onSelect = { viewModel.selectOnly(current); viewing = null },
             onOpen = { viewModel.openCreated(current) },
+            onEdit = { viewing = null; onEditPhoto(current) },
         )
     }
 }
@@ -292,6 +298,7 @@ private fun PhotoViewer(
     onToggle: () -> Unit,
     onSelect: () -> Unit,
     onOpen: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     val excludePeople = state.settings?.excludePeople ?: true
     val skipDuplicates = state.settings?.skipDuplicates ?: true
@@ -338,6 +345,7 @@ private fun PhotoViewer(
                     if (!photo.uploaded) {
                         Button(onClick = onToggle) { Text(if (included) "Exclude" else "Include") }
                     }
+                    if (!photo.isVideo) FilledTonalButton(onClick = onEdit) { Text("🪄 Edit") }
                     FilledTonalButton(onClick = onSelect) { Text("Select") }
                     OutlinedButton(onClick = onOpen) {
                         Text(if (photo.isVideo) "▶ Play" else "Open", color = Color.White)

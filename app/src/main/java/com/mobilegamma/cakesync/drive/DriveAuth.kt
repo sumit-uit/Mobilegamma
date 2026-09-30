@@ -1,5 +1,6 @@
 package com.mobilegamma.cakesync.drive
 
+import android.accounts.Account
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -7,6 +8,7 @@ import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
+import com.mobilegamma.cakesync.data.Settings
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -21,12 +23,14 @@ class DriveAuth(private val context: Context) {
         data class NeedsConsent(val pendingIntent: PendingIntent) : Outcome
     }
 
-    private val request = AuthorizationRequest.builder()
+    /** Uses the account chosen in Settings, if any. */
+    private fun request() = AuthorizationRequest.builder()
         .setRequestedScopes(listOf(Scope(DRIVE_FILE_SCOPE)))
+        .apply { Settings(context).driveAccount?.let { setAccount(Account(it, "com.google")) } }
         .build()
 
     suspend fun authorize(): Outcome = toOutcome(
-        Identity.getAuthorizationClient(context).authorize(request).await()
+        Identity.getAuthorizationClient(context).authorize(request()).await()
     )
 
     /** Call with the data Intent returned after the consent screen closes. */

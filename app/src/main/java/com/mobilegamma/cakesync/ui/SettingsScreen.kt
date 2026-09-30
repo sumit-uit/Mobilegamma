@@ -1,5 +1,6 @@
 package com.mobilegamma.cakesync.ui
 
+import android.accounts.AccountManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -9,7 +10,15 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,9 +35,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.google.android.gms.common.AccountPicker
 import com.mobilegamma.cakesync.data.Categories
 import com.mobilegamma.cakesync.data.Category
+import com.mobilegamma.cakesync.edit.Backdrops
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
+import com.mobilegamma.cakesync.edit.LABEL_COLOURS
+import com.mobilegamma.cakesync.edit.LabelFont
+import com.mobilegamma.cakesync.edit.LabelStyle
 import com.mobilegamma.cakesync.edit.LogoPosition
 import com.mobilegamma.cakesync.scan.PhotoScanner
 import com.mobilegamma.cakesync.share.Captions
@@ -101,12 +115,74 @@ fun SettingsScreen(
         }
 
         Section("☁️", "Google Drive") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (state.driveConnected) "Connected: uploads go to your Drive" else "Not connected yet",
-                    Modifier.weight(1f),
+            val pickAccount = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)?.let(viewModel::switchDriveAccount)
+            }
+            val chooseAccount = {
+                pickAccount.launch(
+                    AccountPicker.newChooseAccountIntent(
+                        AccountPicker.AccountChooserOptions.Builder()
+                            .setAllowableAccountsTypes(listOf("com.google"))
+                            .setAlwaysShowAccountPicker(true)
+                            .build()
+                    )
                 )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (state.driveConnected) "✓ Connected" else "Not connected", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        state.driveAccount ?: if (state.driveConnected) "Your Google account" else "Uploads need a Google account",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (!state.driveConnected) Button(onClick = onConnectDrive) { Text("Connect") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = chooseAccount) { Text(if (state.driveConnected) "Switch account" else "Choose account") }
+                if (state.driveConnected) TextButton(onClick = viewModel::disconnectDrive) { Text("Disconnect") }
+            }
+            Text("Drive folders", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+            var renaming by remember { mutableStateOf<Category?>(null) }
+            s.categories.forEach { category ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("📁 ${category.driveFolder}", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "${category.name} photos · then /<date>/ or /Orders/<order>/",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { renaming = category }) { Text("Change") }
+                }
+            }
+            renaming?.let { category ->
+                var name by remember(category) { mutableStateOf(category.driveFolder) }
+                AlertDialog(
+                    onDismissRequest = { renaming = null },
+                    title = { Text("Drive folder for ${category.name}") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = name, onValueChange = { name = it }, singleLine = true,
+                                label = { Text("Folder name") }, modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "New uploads go into this folder at the top of your Drive (created if it doesn't exist). " +
+                                    "Photos already uploaded stay where they are.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(enabled = name.isNotBlank(), onClick = { viewModel.setDriveFolder(category, name); renaming = null }) {
+                            Text("Save")
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
+                )
             }
             if (!state.driveConnected) {
                 val identity = remember { appIdentity(context) }
@@ -463,6 +539,71 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
         if (name != kit.businessName) {
             Button(onClick = { viewModel.saveBrandKit(kit.copy(businessName = name.trim())) }) { Text("Save name") }
         }
+        var tagline by remember(brandVersion) { mutableStateOf(kit.tagline) }
+        var instagram by remember(brandVersion) { mutableStateOf(kit.instagram) }
+        var facebook by remember(brandVersion) { mutableStateOf(kit.facebook) }
+        var website by remember(brandVersion) { mutableStateOf(kit.website) }
+        OutlinedTextField(
+            value = tagline, onValueChange = { tagline = it }, singleLine = true,
+            label = { Text("Tagline (optional), e.g. Custom cakes · Pune") }, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = instagram, onValueChange = { instagram = it }, singleLine = true,
+            label = { Text("Instagram (optional), e.g. sonibakes") }, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = facebook, onValueChange = { facebook = it }, singleLine = true,
+            label = { Text("Facebook (optional), e.g. Soni Bakes") }, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = website, onValueChange = { website = it }, singleLine = true,
+            label = { Text("Website (optional), e.g. sonibakes.in") }, modifier = Modifier.fillMaxWidth(),
+        )
+        if (tagline != kit.tagline || instagram != kit.instagram || facebook != kit.facebook || website != kit.website) {
+            Button(onClick = {
+                viewModel.saveBrandKit(
+                    kit.copy(
+                        tagline = tagline.trim(), instagram = instagram.trim().removePrefix("@"),
+                        facebook = facebook.trim(), website = website.trim(),
+                    )
+                )
+            }) { Text("Save text") }
+        }
+        Text("Text font", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LabelFont.entries.forEach { f ->
+                val family = remember(f) { FontFamily(f.typeface()) }
+                FilterChip(
+                    selected = kit.labelFont == f,
+                    onClick = { viewModel.saveBrandKit(kit.copy(labelFont = f)) },
+                    label = { Text(f.label, fontFamily = family, fontSize = 16.sp) },
+                )
+            }
+        }
+        Text("Text colour", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LABEL_COLOURS.forEach { (label, colour) ->
+                val selected = kit.labelColor == colour
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape).background(Color(colour))
+                        .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
+                        .clickable { viewModel.saveBrandKit(kit.copy(labelColor = colour)) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) Text("✓", color = if (Color(colour).luminance() > 0.5f) Color.Black else Color.White)
+                }
+            }
+        }
+        Text("Text background", style = MaterialTheme.typography.labelMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LabelStyle.entries.forEach { st ->
+                FilterChip(
+                    selected = kit.labelStyle == st,
+                    onClick = { viewModel.saveBrandKit(kit.copy(labelStyle = st)) },
+                    label = { Text(st.label) },
+                )
+            }
+        }
         Text("Colour filter", style = MaterialTheme.typography.labelMedium)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ColorFilterPreset.entries.forEach { f ->
@@ -474,7 +615,11 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
             }
         }
         Text("Preview", style = MaterialTheme.typography.labelMedium)
-        val preview = kit.copy(businessName = name.trim(), logoSize = size, logoOpacity = opacity)
+        val preview = kit.copy(
+            businessName = name.trim(), logoSize = size, logoOpacity = opacity,
+            tagline = tagline.trim(), instagram = instagram.trim().removePrefix("@"),
+            facebook = facebook.trim(), website = website.trim(),
+        )
         EditPreview(sample, brandVersion, preview) { preview.apply(it) }
         if (kit.isEmpty && name.isBlank()) {
             Text(
@@ -482,8 +627,51 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        Text("Brand backgrounds", style = MaterialTheme.typography.labelMedium)
+        Text(
+            "Your own backdrops (e.g. your table, a pattern in your colours). Use them behind cut-out cakes " +
+                "in the photo studio and in collages.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        BrandBackgrounds()
         SwitchRow("Also brand crops, filters and white-background copies", kit.applyToEdits) {
             viewModel.saveBrandKit(kit.copy(applyToEdits = it))
         }
+    }
+}
+
+/** Thumbnails of the brand backgrounds with remove buttons, plus an Add button. */
+@Composable
+private fun BrandBackgrounds() {
+    val context = LocalContext.current
+    var items by remember { mutableStateOf(Backdrops.brand(context)) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            runCatching { Backdrops.addBrand(context, uri) }
+            items = Backdrops.brand(context)
+        }
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items.forEach { bg ->
+            Box(Modifier.size(64.dp)) {
+                AsyncImage(
+                    model = bg.file, contentDescription = bg.label,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                )
+                Text(
+                    "✕", fontSize = 12.sp,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(2.dp)
+                        .clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surface)
+                        .clickable { Backdrops.removeBrand(bg); items = Backdrops.brand(context) }
+                        .padding(horizontal = 5.dp),
+                )
+            }
+        }
+        OutlinedButton(
+            onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            modifier = Modifier.height(64.dp),
+        ) { Text("＋ Add") }
     }
 }

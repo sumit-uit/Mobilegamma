@@ -30,6 +30,7 @@ enum class EditAction(
     /** Photos needed before Continue is enabled. */
     val minPhotos: Int = 1,
 ) {
+    STUDIO("Edit", "🪄", "Photo studio", "New background, filters, light and crop", CakeBrush.white),
     REEL("Reel", "🎬", "Reel", "Video with music and transitions", CakeBrush.reel),
     COLLAGE("Collage", "🧩", "Collage", "2 to 9 photos in one post", CakeBrush.collage, minPhotos = 2),
     FILTER("Filter", "🎨", "Filter", "Warm, Pastel, Vintage and more", CakeBrush.filter),
@@ -45,10 +46,13 @@ enum class EditAction(
 
     companion object {
         /** Shown as big cards on the Create screen. */
-        val creative = listOf(REEL, COLLAGE, FILTER, BRAND, WHITE_BG, CROP, SHARE, CATALOG)
+        val creative = listOf(STUDIO, REEL, COLLAGE, FILTER, BRAND, CROP, SHARE, CATALOG)
 
         /** Order in the selection panel: quick sorting first, then creative tools. */
-        val panel = listOf(INCLUDE, EXCLUDE, ORDER, CATEGORY, REEL, COLLAGE, FILTER, BRAND, WHITE_BG, CROP, CATALOG, SHARE)
+        val panel = listOf(INCLUDE, EXCLUDE, ORDER, CATEGORY, STUDIO, REEL, COLLAGE, FILTER, BRAND, WHITE_BG, CROP, CATALOG, SHARE)
+
+        /** Actions that make no sense on things the app created (they aren't uploads). */
+        val notForCreations = setOf(INCLUDE, EXCLUDE, ORDER, CATEGORY, CATALOG)
     }
 }
 
@@ -71,6 +75,7 @@ fun runAction(action: EditAction, viewModel: MainViewModel, openDialog: (EditAct
 fun SelectionPanel(
     count: Int,
     showCategory: Boolean,
+    createdMode: Boolean,
     onAction: (EditAction) -> Unit,
     onSelectAll: () -> Unit,
     onDone: () -> Unit,
@@ -87,7 +92,9 @@ fun SelectionPanel(
                 TextButton(onClick = onSelectAll) { Text("All") }
                 TextButton(onClick = onDone) { Text("Done") }
             }
-            val actions = EditAction.panel.filter { showCategory || it != EditAction.CATEGORY }
+            val actions = EditAction.panel.filter {
+                (showCategory || it != EditAction.CATEGORY) && !(createdMode && it in EditAction.notForCreations)
+            }
             actions.chunked(4).forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     row.forEach { action -> ActionTile(action, Modifier.weight(1f)) { onAction(action) } }
@@ -171,8 +178,8 @@ fun ActionDialog(
                 photos = photos,
                 brandKit = kit,
                 onDismiss = onDismiss,
-                onMake = { template, shape, background, brand, price ->
-                    viewModel.makeCollage(template, shape, background, brand, price); onDismiss()
+                onMake = { template, shape, backdrop, spacing, rounded, brand, price ->
+                    viewModel.makeCollage(template, shape, backdrop, spacing, rounded, brand, price); onDismiss()
                 },
             )
         }
@@ -264,7 +271,7 @@ fun ActionDialog(
             },
             confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         )
-        EditAction.INCLUDE, EditAction.EXCLUDE, EditAction.WHITE_BG -> LaunchedEffect(Unit) { onDismiss() }
+        EditAction.INCLUDE, EditAction.EXCLUDE, EditAction.WHITE_BG, EditAction.STUDIO -> LaunchedEffect(Unit) { onDismiss() }
     }
 }
 

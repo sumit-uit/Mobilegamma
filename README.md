@@ -29,6 +29,17 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   bottom navigation (Home · Gallery · Create · Settings), a first-run intro, a Home page with
   your numbers and shortcuts, a full-screen photo viewer, and a Create hub where you pick a tool
   and then the photos.
+- **Photo studio:** edit one photo at a time.
+  - Remove the background and put the cake on a colour, gradient, blurred original or one of
+    your brand backgrounds, with an optional soft shadow.
+  - Filters with a strength setting; brightness, contrast, saturation, warmth and vignette;
+    crop (1:1, 4:5, 9:16, 16:9) and rotate; branding with a price.
+  - Hold the preview to compare with the original. Saved edits appear under Created, where
+    they can be shared, edited again, or used in reels and collages.
+- **Brand text:** choose the font, colour and background style of the business name, add a
+  tagline and Instagram, Facebook and website lines with icons, and upload brand backgrounds.
+- **Google Drive settings:** switch the Google account, disconnect, and change the Drive
+  folder for each category.
 - **Created tab:** reels, collages and edited copies (filter, brand, crop, white background)
   all appear under ✨ Created, where you can open, share or delete them. They are also in the
   Gallery under Pictures/CakeSync and Movies/CakeSync. A "View results" button appears after

@@ -57,35 +57,33 @@ enum class ColorFilterPreset(val label: String) {
     }
 
     private companion object {
-        /** Same maths as android.graphics.ColorMatrix.setSaturation. */
-        fun saturation(s: Float): FloatArray {
-            val inv = 1 - s
-            val r = 0.213f * inv
-            val g = 0.715f * inv
-            val b = 0.072f * inv
-            return floatArrayOf(r + s, g, b, 0f, 0f, r, g + s, b, 0f, 0f, r, g, b + s, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
-        }
-
-        /** [second] applied after [first] (both 4x5, alpha untouched). */
-        fun multiply(first: FloatArray, second: FloatArray): FloatArray {
-            val out = FloatArray(20)
-            for (row in 0..3) {
-                for (col in 0..4) {
-                    var v = if (col == 4) second[row * 5 + 4] else 0f
-                    for (k in 0..3) v += second[row * 5 + k] * first[k * 5 + col]
-                    out[row * 5 + col] = v
-                }
-            }
-            return out
-        }
-
-        /** Mixes [matrix] with the identity: [amount] 1 = full effect. */
-        fun blend(matrix: FloatArray, amount: Float): FloatArray = FloatArray(20) { i ->
-            val identity = if (i % 6 == 0 && i < 20) 1f else 0f
-            identity + (matrix[i] - identity) * amount
-        }
+        fun saturation(s: Float) = ColorMath.saturation(s)
+        fun multiply(first: FloatArray, second: FloatArray) = ColorMath.multiply(first, second)
+        fun blend(matrix: FloatArray, amount: Float) = ColorMath.blend(matrix, amount)
     }
 }
+
+/** Font for the business name label. */
+enum class LabelFont(val label: String, private val family: String, private val style: Int) {
+    CLASSIC("Classic", "sans-serif", Typeface.BOLD),
+    ELEGANT("Elegant", "serif", Typeface.BOLD),
+    SCRIPT("Script", "cursive", Typeface.BOLD),
+    PLAYFUL("Playful", "casual", Typeface.BOLD),
+    MODERN("Modern", "sans-serif-condensed", Typeface.BOLD),
+    TYPEWRITER("Typewriter", "monospace", Typeface.BOLD);
+
+    fun typeface(): Typeface = Typeface.create(family, style)
+}
+
+/** How the label sits on the photo. */
+enum class LabelStyle(val label: String) { DARK("Dark box"), LIGHT("Light box"), SHADOW("No box") }
+
+/** Colours offered for the label text. */
+val LABEL_COLOURS = listOf(
+    "White" to 0xFFFFFFFF.toInt(), "Black" to 0xFF1A1A1A.toInt(), "Raspberry" to 0xFFB83B5E.toInt(),
+    "Pink" to 0xFFFF8FAB.toInt(), "Gold" to 0xFFD4A017.toInt(), "Chocolate" to 0xFF5D3A1A.toInt(),
+    "Mint" to 0xFF3F7D6E.toInt(), "Sky" to 0xFF2C73D2.toInt(),
+)
 
 /** The user's brand settings. */
 data class BrandKit(
@@ -99,8 +97,20 @@ data class BrandKit(
     val filter: ColorFilterPreset,
     /** Also brand crops and white-background copies automatically. */
     val applyToEdits: Boolean,
+    val labelFont: LabelFont = LabelFont.CLASSIC,
+    val labelColor: Int = 0xFFFFFFFF.toInt(),
+    val labelStyle: LabelStyle = LabelStyle.DARK,
+    /** Optional smaller line under the name, e.g. "Custom cakes · Pune". */
+    val tagline: String = "",
+    /** Optional social lines under the name, e.g. "sonibakes" → "@sonibakes". */
+    val instagram: String = "",
+    val facebook: String = "",
+    val website: String = "",
 ) {
-    val isEmpty: Boolean get() = logo == null && businessName.isBlank() && filter == ColorFilterPreset.NONE
+    val hasSocials: Boolean get() = instagram.isNotBlank() || facebook.isNotBlank() || website.isNotBlank() || tagline.isNotBlank()
+
+    val isEmpty: Boolean
+        get() = logo == null && businessName.isBlank() && filter == ColorFilterPreset.NONE && !hasSocials
 
     /**
      * Returns a branded copy of [source]: colour filter, then logo, then a label with the
@@ -131,28 +141,126 @@ data class BrandKit(
             }
         }
 
-        val text = listOfNotNull(businessName.trim().ifBlank { null }, price?.trim()?.ifBlank { null })
-            .joinToString("  ·  ")
-        if (text.isNotEmpty()) {
-            // Label in the bottom corner opposite a bottom logo (or bottom-left otherwise).
-            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                textSize = shortSide * 0.045f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            }
-            val pad = textPaint.textSize * 0.45f
-            val textW = textPaint.measureText(text)
-            val boxH = textPaint.textSize + pad * 2
-            val onRight = position == LogoPosition.BOTTOM_LEFT
-            val left = if (onRight) out.width - margin - textW - pad * 2 else margin
-            val top = out.height - margin - boxH
-            canvas.drawRoundRect(
-                RectF(left, top, left + textW + pad * 2, top + boxH), pad, pad,
-                Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(150, 0, 0, 0) },
-            )
-            canvas.drawText(text, left + pad, top + pad - textPaint.fontMetrics.ascent * 0.95f, textPaint)
-        }
+        drawLabel(canvas, out.width, out.height, shortSide, margin, price)
         return out
+    }
+
+    /**
+     * The business name (and price) in the chosen font, colour and style, with optional
+     * Instagram / Facebook / website lines, in the bottom corner away from a bottom logo.
+     */
+    private fun drawLabel(canvas: Canvas, width: Int, height: Int, shortSide: Float, margin: Float, price: String?) {
+        val title = listOfNotNull(businessName.trim().ifBlank { null }, price?.trim()?.ifBlank { null }).joinToString("  ·  ")
+        val socials = buildList {
+            instagram.trim().ifBlank { null }?.let { add(Social.INSTAGRAM to if (it.startsWith("@")) it else "@$it") }
+            facebook.trim().ifBlank { null }?.let { add(Social.FACEBOOK to it) }
+            website.trim().ifBlank { null }?.let { add(Social.WEB to it.removePrefix("https://").removePrefix("http://")) }
+        }
+        val subtitle = tagline.trim()
+        if (title.isEmpty() && subtitle.isEmpty() && socials.isEmpty()) return
+
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = labelColor
+            textSize = shortSide * 0.05f
+            typeface = labelFont.typeface()
+        }
+        val smallPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = labelColor
+            textSize = shortSide * 0.032f
+            typeface = labelFont.typeface()
+        }
+        if (labelStyle == LabelStyle.SHADOW) {
+            val shadow = if (Color.luminance(labelColor) > 0.5f) 0xAA000000.toInt() else 0x88FFFFFF.toInt()
+            titlePaint.setShadowLayer(titlePaint.textSize * 0.12f, 0f, titlePaint.textSize * 0.05f, shadow)
+            smallPaint.setShadowLayer(smallPaint.textSize * 0.15f, 0f, smallPaint.textSize * 0.05f, shadow)
+        }
+        val icon = smallPaint.textSize * 1.1f
+        val gap = smallPaint.textSize * 0.4f
+        val pad = titlePaint.textSize * 0.45f
+        val maxWidth = width - margin * 2 - pad * 2
+
+        // Socials go on one row when they fit, otherwise one per line.
+        val socialWidths = socials.map { (_, text) -> icon + gap + smallPaint.measureText(text) }
+        val rowWidth = socialWidths.sum() + gap * 2 * (socials.size - 1).coerceAtLeast(0)
+        val socialRows: List<List<Int>> = when {
+            socials.isEmpty() -> emptyList()
+            rowWidth <= maxWidth -> listOf(socials.indices.toList())
+            else -> socials.indices.map { listOf(it) }
+        }
+        val titleWidth = if (title.isEmpty()) 0f else titlePaint.measureText(title)
+        val subtitleWidth = if (subtitle.isEmpty()) 0f else smallPaint.measureText(subtitle)
+        val subtitleHeight = if (subtitle.isEmpty()) 0f else smallPaint.textSize * 1.35f
+        val contentWidth = maxOf(titleWidth, subtitleWidth, socialRows.maxOfOrNull { row -> row.sumOf { socialWidths[it].toDouble() }.toFloat() + gap * 2 * (row.size - 1) } ?: 0f)
+        val titleHeight = if (title.isEmpty()) 0f else titlePaint.textSize * 1.2f
+        val rowHeight = icon * 1.35f
+        val boxW = contentWidth + pad * 2
+        val boxH = titleHeight + subtitleHeight + rowHeight * socialRows.size + pad * 1.4f
+
+        val onRight = position == LogoPosition.BOTTOM_LEFT
+        val left = if (onRight) width - margin - boxW else margin
+        val top = height - margin - boxH
+        when (labelStyle) {
+            LabelStyle.DARK -> canvas.drawRoundRect(RectF(left, top, left + boxW, top + boxH), pad, pad, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(150, 0, 0, 0) })
+            LabelStyle.LIGHT -> canvas.drawRoundRect(RectF(left, top, left + boxW, top + boxH), pad, pad, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(210, 255, 255, 255) })
+            LabelStyle.SHADOW -> Unit
+        }
+        var y = top + pad * 0.7f
+        if (title.isNotEmpty()) {
+            canvas.drawText(title, left + pad, y - titlePaint.fontMetrics.ascent * 0.95f, titlePaint)
+            y += titleHeight
+        }
+        if (subtitle.isNotEmpty()) {
+            canvas.drawText(subtitle, left + pad, y - smallPaint.fontMetrics.ascent * 0.95f, smallPaint)
+            y += subtitleHeight
+        }
+        socialRows.forEach { row ->
+            var x = left + pad
+            row.forEach { i ->
+                val (kind, text) = socials[i]
+                drawSocialIcon(canvas, kind, x, y + (rowHeight - icon) / 2, icon, labelColor)
+                canvas.drawText(text, x + icon + gap, y + rowHeight / 2 - (smallPaint.fontMetrics.ascent + smallPaint.fontMetrics.descent) / 2, smallPaint)
+                x += socialWidths[i] + gap * 2
+            }
+            y += rowHeight
+        }
+    }
+
+    private enum class Social { INSTAGRAM, FACEBOOK, WEB }
+
+    /** Simple line icons drawn in the label colour, so they match any style. */
+    private fun drawSocialIcon(canvas: Canvas, kind: Social, x: Float, y: Float, size: Float, color: Int) {
+        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.STROKE
+            strokeWidth = size * 0.1f
+        }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+        val cx = x + size / 2
+        val cy = y + size / 2
+        when (kind) {
+            Social.INSTAGRAM -> {
+                val inset = stroke.strokeWidth / 2
+                canvas.drawRoundRect(RectF(x + inset, y + inset, x + size - inset, y + size - inset), size * 0.28f, size * 0.28f, stroke)
+                canvas.drawCircle(cx, cy, size * 0.22f, stroke)
+                canvas.drawCircle(x + size * 0.76f, y + size * 0.24f, size * 0.06f, fill)
+            }
+            Social.FACEBOOK -> {
+                canvas.drawCircle(cx, cy, size / 2 - stroke.strokeWidth / 2, stroke)
+                val f = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    this.color = color
+                    textSize = size * 0.8f
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText("f", cx + size * 0.03f, cy - (f.fontMetrics.ascent + f.fontMetrics.descent) / 2, f)
+            }
+            Social.WEB -> {
+                val r = size / 2 - stroke.strokeWidth / 2
+                canvas.drawCircle(cx, cy, r, stroke)
+                canvas.drawOval(RectF(cx - r * 0.45f, cy - r, cx + r * 0.45f, cy + r), stroke)
+                canvas.drawLine(cx - r, cy, cx + r, cy, stroke)
+            }
+        }
     }
 
     companion object {
@@ -170,6 +278,13 @@ data class BrandKit(
                 filter = runCatching { ColorFilterPreset.valueOf(p.getString("brand_filter", null)!!) }
                     .getOrDefault(ColorFilterPreset.NONE),
                 applyToEdits = p.getBoolean("brand_apply_to_edits", false),
+                tagline = p.getString("brand_tagline", "") ?: "",
+                labelFont = runCatching { LabelFont.valueOf(p.getString("brand_font", null)!!) }.getOrDefault(LabelFont.CLASSIC),
+                labelColor = p.getInt("brand_label_color", 0xFFFFFFFF.toInt()),
+                labelStyle = runCatching { LabelStyle.valueOf(p.getString("brand_label_style", null)!!) }.getOrDefault(LabelStyle.DARK),
+                instagram = p.getString("brand_instagram", "") ?: "",
+                facebook = p.getString("brand_facebook", "") ?: "",
+                website = p.getString("brand_website", "") ?: "",
             )
         }
 
@@ -181,6 +296,13 @@ data class BrandKit(
                 putString("brand_name", kit.businessName)
                 putString("brand_filter", kit.filter.name)
                 putBoolean("brand_apply_to_edits", kit.applyToEdits)
+                putString("brand_font", kit.labelFont.name)
+                putInt("brand_label_color", kit.labelColor)
+                putString("brand_label_style", kit.labelStyle.name)
+                putString("brand_tagline", kit.tagline)
+                putString("brand_instagram", kit.instagram)
+                putString("brand_facebook", kit.facebook)
+                putString("brand_website", kit.website)
             }
         }
 

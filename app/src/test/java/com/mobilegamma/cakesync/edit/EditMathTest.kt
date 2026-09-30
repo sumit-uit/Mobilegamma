@@ -116,4 +116,34 @@ class EditMathTest {
         assertEquals("🧩 Collage", Creations.kind("CakeSync_collage_20260929_233348.jpg"))
         assertEquals("▢ 1:1 crop", Creations.kind("cake_1_1080x1080.jpg"))
     }
+
+    @Test
+    fun studioCropKeepsRatioAndSubject() {
+        val square = Studio.cropBox(1000, 600, 1f, cx = 900, cy = 300)
+        assertEquals(600, square.width)
+        assertEquals(600, square.height)
+        assertEquals(400, square.left) // pushed left so it stays inside the photo
+        val story = Studio.cropBox(1000, 600, 9f / 16f)
+        assertEquals(600, story.height)
+        assertEquals((600 * 9f / 16f).toInt(), story.width)
+        assertEquals(Box(0, 0, 1000, 600), Studio.cropBox(1000, 600, null))
+    }
+
+    @Test
+    fun studioColourMatrix() {
+        // Untouched settings change nothing.
+        assertArrayEquals(ColorMath.IDENTITY, ColorMath.studio(StudioSpec()), 1e-4f)
+        // Brighter adds to every channel; warmer adds red and removes blue.
+        val bright = ColorMath.studio(StudioSpec(brightness = 1f))
+        assertTrue(bright[4] > 0 && bright[9] > 0 && bright[14] > 0)
+        val warm = ColorMath.studio(StudioSpec(warmth = 1f))
+        assertTrue(warm[4] > 0 && warm[14] < 0)
+        // A filter at zero strength does nothing.
+        assertArrayEquals(ColorMath.IDENTITY, ColorMath.studio(StudioSpec(filter = ColorFilterPreset.MONO, filterStrength = 0f)), 1e-4f)
+    }
+
+    @Test
+    fun backdropPresetsAreDistinct() {
+        assertEquals(Backdrops.presets.size, Backdrops.presets.map { it.label }.toSet().size)
+    }
 }

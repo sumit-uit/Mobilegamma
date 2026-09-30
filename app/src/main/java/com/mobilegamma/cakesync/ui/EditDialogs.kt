@@ -30,7 +30,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Slider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -54,7 +57,8 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.mobilegamma.cakesync.data.Photo
 import com.mobilegamma.cakesync.edit.BrandKit
-import com.mobilegamma.cakesync.edit.CollageBackground
+import com.mobilegamma.cakesync.edit.Backdrop
+import com.mobilegamma.cakesync.edit.Backdrops
 import com.mobilegamma.cakesync.edit.CollageRenderer
 import com.mobilegamma.cakesync.edit.CollageTemplate
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
@@ -136,6 +140,7 @@ fun CreationDialog(
     onOpen: () -> Unit,
     onShare: (Sharer.Target) -> Unit,
     onDelete: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     AlertDialog(
@@ -153,6 +158,9 @@ fun CreationDialog(
                 Text(item.displayName, style = MaterialTheme.typography.labelSmall)
                 Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
                     Text(if (item.isVideo) "▶ Play" else "Open")
+                }
+                if (!item.isVideo) {
+                    FilledTonalButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) { Text("🪄 Edit in studio") }
                 }
                 Sharer.Target.entries.forEach { target ->
                     OutlinedButton(onClick = { onShare(target) }, modifier = Modifier.fillMaxWidth()) {
@@ -210,13 +218,15 @@ fun CollageDialog(
     photos: List<Photo>,
     brandKit: BrandKit,
     onDismiss: () -> Unit,
-    onMake: (CollageTemplate, PhotoEditor.Shape, CollageBackground, Boolean, String) -> Unit,
+    onMake: (CollageTemplate, PhotoEditor.Shape, Backdrop, Float, Boolean, Boolean, String) -> Unit,
 ) {
     val context = LocalContext.current
     val fits = CollageTemplate.entries.filter { it.size <= photos.size }
     var template by remember { mutableStateOf(fits.lastOrNull { it.size == photos.size } ?: fits.lastOrNull()) }
     var shape by remember { mutableStateOf(PhotoEditor.Shape.SQUARE) }
-    var background by remember { mutableStateOf(CollageBackground.WHITE) }
+    var backdrop by remember { mutableStateOf<Backdrop>(Backdrops.WHITE) }
+    var spacing by remember { mutableFloatStateOf(CollageRenderer.DEFAULT_SPACING) }
+    var rounded by remember { mutableStateOf(true) }
     var brand by remember { mutableStateOf(!brandKit.isEmpty) }
     var price by remember { mutableStateOf("") }
     // Small copies of the photos, loaded once for the preview.
@@ -239,10 +249,10 @@ fun CollageDialog(
                 } else {
                     val loaded = thumbs
                     if (loaded != null && loaded.isNotEmpty()) {
-                        EditPreview(null, t, shape, background, brand, price, loaded.size, maxHeight = 300) {
+                        EditPreview(null, t, shape, backdrop, spacing, rounded, brand, price, loaded.size, maxHeight = 300) {
                             val w = 540
                             val h = w * shape.h / shape.w
-                            val collage = CollageRenderer.render(loaded, t, w, h, background)
+                            val collage = CollageRenderer.render(loaded, t, w, h, backdrop, spacing, rounded)
                             if (brand) brandKit.apply(collage, price) else collage
                         }
                     } else {
@@ -266,11 +276,14 @@ fun CollageDialog(
                             FilterChip(selected = shape == s, onClick = { shape = s }, label = { Text(s.label.substringBefore(' ')) })
                         }
                     }
-                    Text("Background", style = MaterialTheme.typography.labelMedium)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CollageBackground.entries.forEach { b ->
-                            FilterChip(selected = background == b, onClick = { background = b }, label = { Text(b.label) })
-                        }
+                    Text("Spacing: ${(spacing * 1000).toInt() / 10f}%", style = MaterialTheme.typography.labelMedium)
+                    Slider(value = spacing, onValueChange = { spacing = it }, valueRange = 0f..CollageRenderer.MAX_SPACING)
+                    Text("Background (shows in the spacing)", style = MaterialTheme.typography.labelMedium)
+                    BackdropPicker(selected = backdrop, allowPhoto = false) { backdrop = it }
+                    Text("Corners", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(selected = rounded, onClick = { rounded = true }, label = { Text("Rounded") })
+                        FilterChip(selected = !rounded, onClick = { rounded = false }, label = { Text("Square") })
                     }
                     SwitchRow("Add my branding", brand) { brand = it }
                     if (brand) {
@@ -283,7 +296,7 @@ fun CollageDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = template != null, onClick = { onMake(template!!, shape, background, brand, price) }) {
+            TextButton(enabled = template != null, onClick = { onMake(template!!, shape, backdrop, spacing, rounded, brand, price) }) {
                 Text("Save collage")
             }
         },

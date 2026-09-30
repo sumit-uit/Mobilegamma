@@ -15,7 +15,7 @@ import com.mobilegamma.cakesync.data.PhotoStore
 import com.mobilegamma.cakesync.data.Settings
 import com.mobilegamma.cakesync.drive.DriveAuth
 import com.mobilegamma.cakesync.edit.BrandKit
-import com.mobilegamma.cakesync.edit.CollageBackground
+import com.mobilegamma.cakesync.edit.Backdrop
 import com.mobilegamma.cakesync.edit.CollageTemplate
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
 import com.mobilegamma.cakesync.edit.Music
@@ -58,6 +58,8 @@ data class UiState(
     val hasPhotoPermission: Boolean = false,
     val hasVideoPermission: Boolean = false,
     val driveConnected: Boolean = false,
+    /** The Google account used for Drive, when one was chosen. */
+    val driveAccount: String? = null,
     val tab: GridTab = GridTab.MATCHES,
     val photos: List<Photo> = emptyList(),
     val pendingCount: Int = 0,
@@ -133,6 +135,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     hasPhotoPermission = SyncWorker.hasPhotoPermission(getApplication()),
                     hasVideoPermission = SyncWorker.hasVideoPermission(getApplication()),
                     driveConnected = settings.driveConnected,
+                    driveAccount = settings.driveAccount,
                     photos = photos,
                     pendingCount = pending,
                     recent = loaded.recent,
@@ -379,6 +382,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun say(message: String) = _state.update { it.copy(message = message) }
+
+    /** A studio edit was saved: show it under Created. */
+    fun studioSaved() {
+        _state.update { it.copy(message = "Studio edit saved. Find it under Created.", resultsReady = true) }
+        refresh()
+    }
+
+    fun shareUri(uri: Uri, target: Sharer.Target) {
+        val result = runCatching { Sharer.share(getApplication(), listOf(uri to "image/jpeg"), "", target) }
+        _state.update { it.copy(message = result.getOrElse { e -> "Could not share: ${e.message}" }) }
+    }
+
     /** Saves a copy of each selected photo with a colour filter. */
     fun filterSelected(filter: ColorFilterPreset) = editSelected("${filter.label} filter") { editor, photo ->
         editor.filter(photo.uri, photo.displayName, filter)
@@ -391,7 +407,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun makeCollage(
         template: CollageTemplate,
         shape: PhotoEditor.Shape,
-        background: CollageBackground,
+        backdrop: Backdrop,
+        spacing: Float,
+        rounded: Boolean,
         brand: Boolean,
         price: String?,
     ) {
@@ -403,7 +421,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(message = "Making a collage…") }
             val result = runCatching {
-                PhotoEditor(getApplication()).collage(photos.map { it.uri }, template, shape, background, brand, price)
+                PhotoEditor(getApplication()).collage(photos.map { it.uri }, template, shape, backdrop, spacing, rounded, brand, price)
             }
             _state.update {
                 it.copy(
@@ -562,6 +580,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val outcome = runCatching { auth.authorize() }
             handleAuth(outcome)
         }
+    }
+
+    /** Switches Drive to another Google account; folders are found or created again there. */
+    fun switchDriveAccount(accountName: String) {
+        settings.driveAccount = accountName
+        settings.clearDriveFolders()
+        settings.driveConnected = false
+        _state.update { it.copy(driveConnected = false, driveAccount = accountName) }
+        connectDrive()
+    }
+
+    fun disconnectDrive() {
+        settings.driveConnected = false
+        settings.driveAccount = null
+        settings.clearDriveFolders()
+        _state.update { it.copy(driveConnected = false, driveAccount = null, message = "Google Drive disconnected") }
+    }
+
+    /** Uploads for [category] go to a Drive folder called [folder] from now on. */
+    fun setDriveFolder(category: Category, folder: String) {
+        val name = folder.trim().ifBlank { return }
+        saveCategory(category.copy(driveFolder = name))
+        _state.update { it.copy(message = "${category.name} will upload to the Drive folder “$name”") }
     }
 
     fun onConsentLaunched() = _state.update { it.copy(consentIntent = null) }

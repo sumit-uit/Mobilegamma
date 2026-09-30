@@ -87,6 +87,17 @@ class Settings(context: Context) {
         get() = prefs.getString(KEY_ROOT_FOLDER_ID, null)
         set(value) = prefs.edit { putString(KEY_ROOT_FOLDER_ID, value) }
 
+    /** Google account chosen for Drive (null = let Google pick the phone's default). */
+    var driveAccount: String?
+        get() = prefs.getString(KEY_DRIVE_ACCOUNT, null)
+        set(value) = prefs.edit { putString(KEY_DRIVE_ACCOUNT, value) }
+
+    /** Forgets the cached Drive folder ids, e.g. after switching to another Google account. */
+    fun clearDriveFolders() = prefs.edit {
+        prefs.all.keys.filter { it.startsWith("drive_root_") }.forEach { remove(it) }
+        remove(KEY_ROOT_FOLDER_ID)
+    }
+
     var driveConnected: Boolean
         get() = prefs.getBoolean(KEY_CONNECTED, false)
         set(value) = prefs.edit { putBoolean(KEY_CONNECTED, value) }
@@ -114,6 +125,7 @@ class Settings(context: Context) {
         const val KEY_FOLDERS = "scan_folders"
         const val KEY_ROOT_FOLDER_ID = "drive_root_folder_id"
         const val KEY_CONNECTED = "drive_connected"
+        const val KEY_DRIVE_ACCOUNT = "drive_account"
         const val KEY_LAST_MSG = "last_sync_message"
     }
 }

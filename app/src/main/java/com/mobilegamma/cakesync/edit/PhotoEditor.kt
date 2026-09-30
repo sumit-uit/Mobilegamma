@@ -50,11 +50,25 @@ class PhotoEditor(private val context: Context) {
      */
     suspend fun removeBackground(uri: Uri, displayName: String): Uri = withContext(Dispatchers.Default) {
         val source = load(uri)
+        val foreground = cutout(source)
+        val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        Canvas(out).apply {
+            drawColor(Color.WHITE)
+            drawBitmap(foreground, 0f, 0f, null)
+        }
+        save(brandIfEnabled(out), "${baseName(displayName)}_white.jpg")
+    }
+
+    /**
+     * The subject (the cake) with a transparent background, same size as [source]. Uses ML Kit
+     * subject segmentation, whose model Google Play services downloads on first use.
+     */
+    suspend fun cutout(source: Bitmap): Bitmap = withContext(Dispatchers.Default) {
         val segmenter = SubjectSegmentation.getClient(
             SubjectSegmenterOptions.Builder().enableForegroundBitmap().build()
         )
         try {
-            val foreground = try {
+            try {
                 segmenter.process(InputImage.fromBitmap(source, 0)).await().foregroundBitmap
             } catch (e: MlKitException) {
                 if (e.errorCode != MlKitException.UNAVAILABLE) throw e
@@ -64,16 +78,53 @@ class PhotoEditor(private val context: Context) {
                         .installModules(ModuleInstallRequest.newBuilder().addApi(segmenter).build())
                 }
                 throw ModelDownloading()
-            } ?: throw IOException("No subject found in the photo")
-            val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-            Canvas(out).apply {
-                drawColor(Color.WHITE)
-                drawBitmap(foreground, 0f, 0f, null)
-            }
-            save(brandIfEnabled(out), "${baseName(displayName)}_white.jpg")
+            } ?: throw IOException("No cake found in the photo")
         } finally {
             segmenter.close()
         }
+    }
+
+    /** A photo open in the studio: the full-size picture plus a small copy for fast previews. */
+    class StudioSession(
+        val name: String,
+        val source: Bitmap,
+        val subject: Rect?,
+        val preview: Bitmap,
+        val previewSubject: Rect?,
+    ) {
+        var cutout: Bitmap? = null
+        var previewCutout: Bitmap? = null
+    }
+
+    suspend fun openStudio(uri: Uri, displayName: String): StudioSession = withContext(Dispatchers.Default) {
+        val source = load(uri)
+        val subject = subjectBox(source)
+        val scale = minOf(1f, 900f / maxOf(source.width, source.height))
+        val preview = if (scale < 1f) {
+            Bitmap.createScaledBitmap(source, (source.width * scale).toInt(), (source.height * scale).toInt(), true)
+        } else source
+        val previewSubject = subject?.let {
+            Rect((it.left * scale).toInt(), (it.top * scale).toInt(), (it.right * scale).toInt(), (it.bottom * scale).toInt())
+        }
+        StudioSession(displayName, source, subject, preview, previewSubject)
+    }
+
+    /** Cuts the cake out of the session's photo (once). */
+    suspend fun cutout(session: StudioSession) {
+        if (session.cutout != null) return
+        val cut = cutout(session.source)
+        session.previewCutout = Bitmap.createScaledBitmap(cut, session.preview.width, session.preview.height, true)
+        session.cutout = cut
+    }
+
+    /** Small, quick render for the on-screen preview. */
+    fun previewStudio(session: StudioSession, spec: StudioSpec): Bitmap =
+        Studio.render(session.preview, session.previewCutout, session.previewSubject, spec, BrandKit.load(context))
+
+    /** Full-size render saved as a new photo. */
+    suspend fun saveStudio(session: StudioSession, spec: StudioSpec): Uri = withContext(Dispatchers.Default) {
+        val out = Studio.render(session.source, session.cutout, session.subject, spec, BrandKit.load(context))
+        save(out, "${baseName(session.name)}_studio_${System.currentTimeMillis() / 1000}.jpg")
     }
 
     /**
@@ -137,12 +188,14 @@ class PhotoEditor(private val context: Context) {
         uris: List<Uri>,
         template: CollageTemplate,
         shape: Shape,
-        background: CollageBackground,
+        backdrop: Backdrop,
+        spacing: Float,
+        rounded: Boolean,
         brand: Boolean,
         price: String?,
     ): Uri = withContext(Dispatchers.Default) {
         val photos = uris.take(template.size).map { loadScaled(context, it, 1400) }
-        val collage = CollageRenderer.render(photos, template, shape.w, shape.h, background)
+        val collage = CollageRenderer.render(photos, template, shape.w, shape.h, backdrop, spacing, rounded)
         val kit = BrandKit.load(context)
         val out = if (brand && (!kit.isEmpty || !price.isNullOrBlank())) kit.apply(collage, price) else collage
         save(out, "CakeSync_collage_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".jpg")

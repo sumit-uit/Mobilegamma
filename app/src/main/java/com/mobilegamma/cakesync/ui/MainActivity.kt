@@ -137,12 +137,26 @@ private fun MainScaffold(
     var pending by rememberSaveable { mutableStateOf<EditAction?>(null) }
     var dialog by remember { mutableStateOf<EditAction?>(null) }
     var openCreation by remember { mutableStateOf<Photo?>(null) }
+    var studio by remember { mutableStateOf<Pair<Photo, StudioTab>?>(null) }
     val categories = state.settings?.categories.orEmpty()
     val businessName = remember(state.brandVersion) { viewModel.brandKit().businessName }
 
     fun go(to: Screen, tab: GridTab? = null) {
         tab?.let { viewModel.setTab(it) }
         screen = to
+    }
+
+    /** Opens the studio on the first selected photo. */
+    fun openStudio(tab: StudioTab) {
+        val photo = state.photos.firstOrNull { it.mediaId in state.selected && !it.isVideo }
+        if (photo == null) viewModel.say("Photo studio: select a photo (videos can't be edited)")
+        else studio = photo to tab
+    }
+
+    fun onAction(action: EditAction, fromCreate: Boolean) {
+        runAction(action, viewModel) { a ->
+            if (a == EditAction.STUDIO) openStudio(if (fromCreate) StudioTab.BACKGROUND else StudioTab.FILTERS) else dialog = a
+        }
     }
 
     fun startCreate(action: EditAction) {
@@ -169,13 +183,14 @@ private fun MainScaffold(
                     onContinue = {
                         val action = pending!!
                         pending = null
-                        runAction(action, viewModel) { dialog = it }
+                        onAction(action, fromCreate = true)
                     },
                 )
                 screen == Screen.GALLERY && state.selected.isNotEmpty() -> SelectionPanel(
                     count = state.selected.size,
-                    showCategory = categories.size > 1,
-                    onAction = { runAction(it, viewModel) { a -> dialog = a } },
+                    showCategory = categories.size > 1 && state.tab != GridTab.CREATED,
+                    createdMode = state.tab == GridTab.CREATED,
+                    onAction = { onAction(it, fromCreate = false) },
                     onSelectAll = viewModel::selectAllShown,
                     onDone = viewModel::clearSelection,
                 )
@@ -221,6 +236,7 @@ private fun MainScaffold(
                     pendingAction = pending,
                     onCancelPending = { pending = null; viewModel.clearSelection() },
                     onOpenCreation = { openCreation = it },
+                    onEditPhoto = { studio = it to StudioTab.FILTERS },
                 )
                 Screen.CREATE -> CreateScreen(
                     createdCount = state.createdCount,
@@ -245,7 +261,14 @@ private fun MainScaffold(
             onOpen = { viewModel.openCreated(item); openCreation = null },
             onShare = { target -> viewModel.shareCreated(item, target); openCreation = null },
             onDelete = { viewModel.deleteCreated(item); openCreation = null },
+            onEdit = { studio = item to StudioTab.FILTERS; openCreation = null },
         )
+    }
+    studio?.let { (photo, tab) ->
+        StudioScreen(photo = photo, startTab = tab, viewModel = viewModel) {
+            studio = null
+            viewModel.clearSelection()
+        }
     }
 }
 

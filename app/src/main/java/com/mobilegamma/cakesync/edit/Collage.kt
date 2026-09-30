@@ -34,38 +34,33 @@ private fun grid(cols: Int, rows: Int): List<Cell> = buildList {
     }
 }
 
-/** Background colours for the gaps between photos. */
-enum class CollageBackground(val label: String, val color: Int) {
-    WHITE("White", 0xFFFFFFFF.toInt()),
-    CREAM("Cream", 0xFFFFF4E4.toInt()),
-    PINK("Pink", 0xFFFCE1E6.toInt()),
-    BLACK("Black", 0xFF000000.toInt()),
-}
-
 object CollageRenderer {
     /**
-     * Draws [photos] into [template] on a [width]x[height] canvas. Each photo is scaled to
-     * fill its cell and cropped around the centre; cells are separated by a thin gap.
+     * Draws [photos] into [template] on a [width]x[height] canvas over [backdrop]. Each photo
+     * fills its cell, cropped around the centre. [spacing] is the gap between photos (and the
+     * frame around them) as a fraction of the shorter side; [rounded] rounds the corners.
      */
     fun render(
         photos: List<Bitmap>,
         template: CollageTemplate,
         width: Int,
         height: Int,
-        background: CollageBackground,
+        backdrop: Backdrop,
+        spacing: Float = DEFAULT_SPACING,
+        rounded: Boolean = true,
     ): Bitmap {
         require(photos.isNotEmpty()) { "No photos for the collage" }
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
-        canvas.drawColor(background.color)
-        val gap = minOf(width, height) * GAP
-        val radius = gap * 1.2f
+        Backdrops.draw(canvas, backdrop, width, height)
+        val gap = minOf(width, height) * spacing
+        val radius = if (rounded) minOf(width, height) * 0.03f else 0f
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         template.cells.forEachIndexed { i, cell ->
             val photo = photos[i % photos.size]
             val rect = cellRect(cell, width, height, gap)
             canvas.save()
-            canvas.clipPath(Path().apply { addRoundRect(rect, radius, radius, Path.Direction.CW) })
+            if (radius > 0f) canvas.clipPath(Path().apply { addRoundRect(rect, radius, radius, Path.Direction.CW) })
             canvas.drawBitmap(photo, centreCrop(photo.width, photo.height, rect.width(), rect.height()), rect, paint)
             canvas.restore()
         }
@@ -94,6 +89,7 @@ object CollageRenderer {
         return Rect(left, top, left + cropW, top + cropH)
     }
 
-    /** Gap between photos as a fraction of the canvas's shorter side. */
-    const val GAP = 0.018f
+    /** Default gap between photos as a fraction of the canvas's shorter side. */
+    const val DEFAULT_SPACING = 0.03f
+    const val MAX_SPACING = 0.1f
 }

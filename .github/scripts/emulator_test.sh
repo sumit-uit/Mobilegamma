@@ -279,7 +279,11 @@ PY
   shot 05d-after-category
 fi
 
-echo "== Branding: business name in the brand kit"
+echo "== Drive settings: account and folders"
+if scroll_to_text "Drive folders"; then shot 05a2-drive-settings; fi
+scroll_top
+
+echo "== Branding: business name, tagline, Instagram, font and colour in the brand kit"
 brand_ok=1
 if scroll_to_text "Business name"; then
   tap_text "Business name" && adb shell input text "Soni%sBakes"
@@ -288,6 +292,14 @@ if scroll_to_text "Business name"; then
   tap_text "Save name" || true
   sleep 1
   shot 05i-brand-kit
+  if scroll_to_text "Tagline"; then
+    tap_text "Tagline" && adb shell input text "Custom%scakes%sPune"; sleep 1; hide_keyboard
+    tap_text "Instagram" && adb shell input text "sonibakes"; sleep 1; hide_keyboard
+    scroll_to_text "Save text" && tap_text "Save text"
+    sleep 1
+  fi
+  scroll_to_text "Text font" && { tap_exact "Script" || true; sleep 1; }
+  shot 05i1-brand-fonts
   scroll_to_text "Preview" || true
   adb shell input swipe 540 1500 540 1000 300; sleep 3
   shot 05i2-brand-preview
@@ -485,7 +497,43 @@ if select_first_photo; then
   fi
 fi
 
+echo "== Photo studio: open a photo, Edit, try filters/adjust/background/brand, save"
+studio_ok=1
+nav Gallery || true
+tap_text "Matches" || true
+sleep 2
+first_label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+if [ -n "$first_label" ]; then
+  pos=$(find_text "$first_label"); set -- $pos
+  adb shell input tap "$1" "$(( $2 - 150 ))"
+  sleep 2
+  if tap_text "Edit"; then
+    sleep 5
+    shot 08-studio-filters
+    tap_exact "Warm" || true; sleep 2
+    tap_exact "Adjust" || true; sleep 2
+    shot 08b-studio-adjust
+    tap_exact "Background" || true; sleep 1
+    tap_text "Remove background" || true
+    sleep 15
+    shot 08c-studio-background
+    dump_ui | grep -oE 'text="[^"]*(Downloading|No cake|Could not)[^"]*"' | head -2 || true
+    tap_exact "Brand" || true; sleep 1
+    tap_text "Add my logo" || true; sleep 2
+    shot 08d-studio-brand
+    tap_exact "Save" || true
+    sleep 6
+    shot 08e-studio-saved
+    n=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_studio_" || true)
+    echo "studio edits: $n"
+    if [ "${n:-0}" -ge 1 ]; then echo "PASS: studio edit saved"; studio_ok=0; else echo "FAIL: no studio edit saved"; fi
+    tap_text "Done" || adb shell input keyevent KEYCODE_BACK
+    sleep 2
+  fi
+fi
+
 echo "== White background (needs the Play services model; reported, not required)"
+nav Gallery || true
 if select_first_photo && tap_exact "White bg"; then
   sleep 20
   nav Home || true
@@ -560,6 +608,9 @@ if [ "${matches:-0}" -lt 1 ]; then
 fi
 if [ "$created_ok" -ne 0 ]; then
   echo "FAIL: Created tab check"; exit 1
+fi
+if [ "$studio_ok" -ne 0 ]; then
+  echo "FAIL: photo studio check"; exit 1
 fi
 if [ "$collage_ok" -ne 0 ]; then
   echo "FAIL: collage check"; exit 1
