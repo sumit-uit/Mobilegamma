@@ -100,4 +100,59 @@ class OrderLogicTest {
         assertEquals("💬 Priya · 8\" Rasmalai (Pickup)", title)
         assertFalse(OrderStatus.DONE.active)
     }
+
+    @Test
+    fun readsTheWebFormMessage() {
+        // What docs/order/index.html sends.
+        val text = """
+            Hi Soni Bakes! I'd like to order a cake:
+            🙋 Name: Priya Test
+            📞 Phone: 4165550100
+            🎂 Design: Pink Floral Cake
+            📏 Size: 8"
+            🍰 Flavour: Rasmalai
+            🎉 Occasion:
+            ✍️ Message on cake: Happy 5th Birthday Aarav
+            🥚 Eggless: Yes
+            ⏰ Pickup / delivery time: 5:30 PM
+            🚗 Pickup or delivery (address): Delivery to 12 King St
+            📅 Date needed: 2026-10-10 (Sat, 10 Oct)
+            ❓ Number of guests: 20
+            🎨 Style: Fondant
+            ➕ Extras: Edible image
+            📋 Cake type: Cakes
+            💰 Estimate: $135
+            📷 (I'll attach a reference photo)
+        """.trimIndent()
+        val s = settings.copy(customQuestions = listOf("Number of guests"))
+        val order = OrderMessage.toOrder(text, s, "o1", menu.extras, LocalDate.of(2026, 9, 30), menu.levels)
+        assertEquals(LocalDate.of(2026, 10, 10), order.due)
+        assertEquals(LocalTime.of(17, 30), order.time)
+        assertEquals("fondant", order.levelId)
+        assertEquals(setOf("Eggless", "Edible image"), order.options)
+        assertEquals("12 King St", order.address)
+        assertEquals("20", order.answers["Number of guests"])
+        // The same total the form showed.
+        assertEquals(135.0, Quote.calculate(order, table, menu)!!, 1e-9)
+    }
+
+    @Test
+    fun formLinkCarriesTheMenuAndContacts() {
+        val s = settings.copy(whatsapp = "+1 (416) 555-0100", instagram = "@sonibakes", bookingLink = "calendar.app.google/abc", menuLink = "sonibakeart.ca/menu")
+        val json = OrderForm.json(s, "Soni Bakes", "$", listOf(FormTable("Cakes", table)), menu.levels, menu.extras, design = "Pink Floral Cake")
+        val link = OrderForm.link(json)
+        assertTrue(link, link.startsWith(OrderForm.BASE_URL + "#z"))
+        val back = org.json.JSONObject(OrderForm.decode(link.substringAfter("#z")))
+        assertEquals("14165550100", back.getString("wa"))
+        assertEquals("sonibakes", back.getString("ig"))
+        assertEquals("Pink Floral Cake", back.getString("d"))
+        val cakes = back.getJSONArray("t").getJSONObject(0)
+        assertEquals("Cakes", cakes.getString("n"))
+        assertEquals(100.0, cakes.getJSONArray("f").getJSONArray(1).getDouble(2), 1e-9)
+        val msg = OrderForm.shareText(s, "Soni Bakes", link)
+        assertTrue(msg, msg.contains(link))
+        assertTrue(msg, msg.contains("https://calendar.app.google/abc"))
+        assertTrue(msg, msg.contains("https://sonibakeart.ca/menu"))
+        assertTrue(msg, msg.contains("https://instagram.com/sonibakes"))
+    }
 }

@@ -22,6 +22,8 @@ import com.mobilegamma.cakesync.edit.Music
 import com.mobilegamma.cakesync.edit.ReelOptions
 import com.mobilegamma.cakesync.menu.CardEntry
 import com.mobilegamma.cakesync.orders.Booking
+import com.mobilegamma.cakesync.orders.FormTable
+import com.mobilegamma.cakesync.orders.OrderForm
 import com.mobilegamma.cakesync.orders.CalendarSync
 import com.mobilegamma.cakesync.orders.Order
 import com.mobilegamma.cakesync.orders.OrderMessage
@@ -227,7 +229,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** A customer's message shared into the app becomes a draft order. */
     fun importOrderText(text: String) {
         val menu = menuStore.load()
-        val draft = OrderMessage.toOrder(text, orderStore.load().settings, "o${System.currentTimeMillis()}", menu.settings.extras)
+        val parsed = OrderMessage.toOrder(text, orderStore.load().settings, "o${System.currentTimeMillis()}", menu.settings.extras, levels = menu.settings.levels)
+        // The price table whose sizes and flavours match what the customer picked (cakes, cupcakes, …).
+        val table = menu.tables.firstOrNull { t ->
+            t.sizes.any { it.label.equals(parsed.size, true) } && t.flavours.any { it.name.equals(parsed.flavour, true) }
+        } ?: menu.tables.firstOrNull { t -> t.sizes.any { it.label.equals(parsed.size, true) } }
+        val draft = parsed.copy(categoryId = table?.categoryId)
         _state.update { it.copy(editingOrder = draft, message = "Order details read from the message. Check them and save.") }
     }
 
@@ -319,8 +326,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The blank order form to send to customers or put in a bio. */
+    /** Order setup with the brand kit's socials filled in where the setup left them blank. */
+    private fun orderContacts(): OrderSettings {
+        val kit = brandKit()
+        val s = orderStore.load().settings
+        return s.copy(
+            instagram = s.instagram.ifBlank { kit.instagram },
+            messengerPage = s.messengerPage.ifBlank { kit.facebook },
+            website = s.website.ifBlank { kit.website },
+        )
+    }
+
+    /** The link to the web order form, carrying the menu, questions and contacts. */
+    fun orderFormLink(design: String = ""): String {
+        val menu = menuStore.load()
+        val json = OrderForm.json(
+            settings = orderContacts(),
+            business = brandKit().businessName,
+            currency = menu.settings.currency,
+            tables = namedTables(menu).map { FormTable(it.name, it.table) },
+            levels = menu.settings.levels,
+            extras = menu.settings.extras,
+            design = design,
+        )
+        return OrderForm.link(json)
+    }
+
+    /** The message to send a customer: the form link plus booking, menu and social links. */
+    fun orderFormMessage(design: String = ""): String =
+        OrderForm.shareText(orderContacts(), brandKit().businessName, orderFormLink(design), design)
+
+    /** The fill-in-the-blanks text, for customers who'd rather reply in the chat. */
     fun orderFormText(design: String = ""): String =
         OrderMessage.template(orderStore.load().settings, brandKit().businessName, design)
+
+    fun copyText(label: String, text: String) {
+        getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
+            .setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+        _state.update { it.copy(message = "$label copied") }
+    }
+
+    fun openLink(url: String) {
+        runCatching {
+            getApplication<Application>().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { e -> say("Could not open the link: ${e.message}") }
+    }
 
     // --- Menu ---
 

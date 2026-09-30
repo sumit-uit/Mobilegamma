@@ -154,17 +154,40 @@ private fun OrderCard(order: Order, menu: MenuData, viewModel: MainViewModel) {
     }
 }
 
-/** The blank order form, to send to a customer or put in a bio. */
+/** The order form to send a customer: a link to a fill-in web form, or text to fill in by hand. */
 @Composable
 private fun OrderFormDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
-    val text = remember { viewModel.orderFormText() }
+    var asText by remember { mutableStateOf(false) }
+    val link = remember { viewModel.orderFormLink() }
+    val message = remember { viewModel.orderFormMessage() }
+    val template = remember { viewModel.orderFormText() }
+    val text = if (asText) template else message
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Order form") },
         text = {
-            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Send this to customers. When they reply, share their message into CakeSync and the order fills in by itself.", style = MaterialTheme.typography.bodySmall)
-                Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(12.dp))
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !asText, onClick = { asText = false }, label = { Text("Form link") })
+                    FilterChip(selected = asText, onClick = { asText = true }, label = { Text("Fill-in text") })
+                }
+                Text(
+                    if (asText) {
+                        "Customers copy this, fill it in and send it back. Share their reply into CakeSync and the order fills in by itself."
+                    } else {
+                        "Customers tap the link, pick size, flavour and date on a simple form with your prices, and tap Send: " +
+                            "it comes straight back to your WhatsApp or email, ready to share into CakeSync. Your booking, menu and social links go along."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(text, style = MaterialTheme.typography.bodySmall, maxLines = if (asText) Int.MAX_VALUE else 14, modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(12.dp))
+                if (!asText) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { viewModel.openLink(link) }, modifier = Modifier.weight(1f)) { Text("👀 Preview") }
+                        OutlinedButton(onClick = { viewModel.copyText("Form link", link) }, modifier = Modifier.weight(1f)) { Text("🔗 Copy link") }
+                    }
+                    Text("Tip: put the link in your Instagram bio or WhatsApp Business catalogue.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Channel.entries.forEach { ch ->
                     OutlinedButton(onClick = { viewModel.sendToCustomer(Order("form"), text, ch); onDismiss() }, modifier = Modifier.fillMaxWidth()) { Text("Send by ${ch.label}") }
                 }
@@ -394,7 +417,11 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
     // Calendar access already granted: start with the first (Google) calendar picked.
     var s by remember {
         val first = calendars.firstOrNull()
-        mutableStateOf(state.orderSettings.let { o -> if (o.calendarId == null && first != null) o.copy(calendarId = first.id, calendarName = first.name) else o })
+        val kit = viewModel.brandKit()
+        mutableStateOf(
+            state.orderSettings.let { o -> if (o.calendarId == null && first != null) o.copy(calendarId = first.id, calendarName = first.name) else o }
+                .let { o -> o.copy(instagram = o.instagram.ifBlank { kit.instagram }, messengerPage = o.messengerPage.ifBlank { kit.facebook }, website = o.website.ifBlank { kit.website }) },
+        )
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         calendars = viewModel.phoneCalendars()
@@ -418,12 +445,19 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         when (page) {
                             0 -> {
-                                Text("Where do customers message you? Fill in the ones you use; the order form and quotes use them.", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "Where do customers reach you? Orders from your web order form are sent to your WhatsApp or email, " +
+                                        "and every link here goes out with the form so customers can book, see your menu and follow you.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                                 OutlinedTextField(value = s.whatsapp, onValueChange = { s = s.copy(whatsapp = it) }, singleLine = true, label = { Text("WhatsApp number (with country code)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
                                 OutlinedTextField(value = s.messengerPage, onValueChange = { s = s.copy(messengerPage = it) }, singleLine = true, label = { Text("Facebook page name") }, modifier = Modifier.fillMaxWidth())
                                 OutlinedTextField(value = s.instagram, onValueChange = { s = s.copy(instagram = it) }, singleLine = true, label = { Text("Instagram") }, modifier = Modifier.fillMaxWidth())
                                 OutlinedTextField(value = s.email, onValueChange = { s = s.copy(email = it) }, singleLine = true, label = { Text("Email for orders") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
-                                OutlinedTextField(value = s.bookingLink, onValueChange = { s = s.copy(bookingLink = it) }, singleLine = true, label = { Text("Booking page link (optional)") }, modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(value = s.website, onValueChange = { s = s.copy(website = it) }, singleLine = true, label = { Text("Website (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(value = s.bookingLink, onValueChange = { s = s.copy(bookingLink = it) }, singleLine = true, label = { Text("Booking page link, e.g. Google Calendar (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(value = s.menuLink, onValueChange = { s = s.copy(menuLink = it) }, singleLine = true, label = { Text("Menu link (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
+                                UsedFor("The order form's Send buttons, and the links under it. Your prices from Menu → Prices show on the form, so a menu link is optional.")
                             }
                             1 -> {
                                 LabeledNumber("Advance to confirm (%)", s.advancePercent) { s = s.copy(advancePercent = it.coerceIn(0, 100)) }
@@ -432,6 +466,7 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
                                 LabeledNumber("Minimum notice for orders (days)", s.leadDays) { s = s.copy(leadDays = it.coerceIn(0, 60)) }
                                 SwitchRow("I deliver", s.delivers) { s = s.copy(delivers = it) }
                                 if (s.delivers) OutlinedTextField(value = s.deliveryFee, onValueChange = { s = s.copy(deliveryFee = it) }, singleLine = true, label = { Text("Delivery fee, e.g. $10–20 by distance") }, modifier = Modifier.fillMaxWidth())
+                                UsedFor("Shown on the order form, and in each quote you send: the total, the advance to pay and how, and your cancellation rule. Minimum notice sets the earliest date customers can pick.")
                             }
                             2 -> {
                                 Text("Name, phone, design, size, flavour and date are always asked. Choose the rest:", style = MaterialTheme.typography.bodySmall)
@@ -448,6 +483,7 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
                                     }
                                 }
                                 TextButton(onClick = { s = s.copy(customQuestions = s.customQuestions + "") }) { Text("+ Add a question") }
+                                UsedFor("The questions on your order form. Answers land in the order when you share the customer's message into CakeSync.")
                                 Text("Preview", style = MaterialTheme.typography.labelLarge)
                                 Text(
                                     OrderMessage.template(s, "your bakery"),
@@ -485,6 +521,11 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
             }
         }
     }
+}
+
+@Composable
+private fun UsedFor(text: String) {
+    Text("ℹ️ Used for: $text", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable

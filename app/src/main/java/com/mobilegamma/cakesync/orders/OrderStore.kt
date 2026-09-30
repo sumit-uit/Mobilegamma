@@ -48,6 +48,8 @@ class OrderStore(context: Context) {
         calendarName = s.optString("calendarName"),
         importBookings = s.optBoolean("importBookings", true),
         bookingLink = s.optString("bookingLink"),
+        menuLink = s.optString("menuLink"),
+        website = s.optString("website"),
         reminderHours = s.optJSONArray("reminderHours")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: listOf(24, 3),
     )
 
@@ -58,6 +60,7 @@ class OrderStore(context: Context) {
         .put("delivers", s.delivers).put("deliveryFee", s.deliveryFee)
         .put("questions", JSONArray(s.questions.toList())).put("customQuestions", JSONArray(s.customQuestions))
         .put("calendarName", s.calendarName).put("importBookings", s.importBookings).put("bookingLink", s.bookingLink)
+        .put("menuLink", s.menuLink).put("website", s.website)
         .put("reminderHours", JSONArray(s.reminderHours))
         .apply { s.calendarId?.let { put("calendarId", it) } }
 

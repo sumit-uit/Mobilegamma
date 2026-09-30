@@ -44,7 +44,14 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   - Every order is **scheduled in your calendar** (your Google Calendar, synced by Android) with
     reminders a day and 3 hours before, and updated when the order changes. Bookings already in
     the calendar can be turned into orders.
-  - **Order form** to send to customers, built from your questions.
+  - **Order form link** to send to customers or put in your bio. It opens a simple web form
+    (`docs/order/`, served by GitHub Pages) with your sizes, flavours, prices, styles and
+    extras, the questions you chose and an estimated price. Send opens WhatsApp, email,
+    Instagram or Messenger with the filled-in order, ready to share back into CakeSync.
+    Everything the form shows travels in the link, so no server stores anything. Your
+    booking page, menu, Instagram, Facebook and website links go out with it. A fill-in
+    text version is still there for customers who prefer to reply in the chat.
+    One-time setup: in the repo's Settings → Pages, deploy from branch `main`, folder `/docs`.
 - **Menu builder:**
   - A price list per category: flavours × sizes (e.g. 6", 8", 10", 12" with servings), from a
     template (round cakes, cupcake packs, by weight) or pasted straight from your website's

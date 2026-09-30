@@ -570,6 +570,13 @@ else
 fi
 nav Orders || true
 shot 10f-orders-list
+if tap_text "Order form"; then
+  sleep 2
+  shot 10f2-order-form-link
+  if dump_ui | grep -q "sumit-uit.github.io/Mobilegamma/order/#z"; then echo "PASS: order form link shown"; else echo "NOTE: order form link not seen"; fi
+  tap_exact "Close" || adb shell input keyevent KEYCODE_BACK
+  sleep 1
+fi
 if tap_text "From calendar"; then
   sleep 3
   shot 10g-calendar-bookings

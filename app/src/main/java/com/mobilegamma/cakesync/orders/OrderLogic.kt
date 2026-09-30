@@ -1,5 +1,6 @@
 package com.mobilegamma.cakesync.orders
 
+import com.mobilegamma.cakesync.menu.DesignLevel
 import com.mobilegamma.cakesync.menu.Extra
 import com.mobilegamma.cakesync.menu.MenuSettings
 import com.mobilegamma.cakesync.menu.PriceTable
@@ -57,6 +58,9 @@ data class OrderSettings(
     val importBookings: Boolean = true,
     /** The bakery's Google Calendar booking page, shared with customers. */
     val bookingLink: String = "",
+    /** A link to the bakery's menu (their website's menu page, a shared PDF, …). */
+    val menuLink: String = "",
+    val website: String = "",
     /** Reminders before each order, in hours. */
     val reminderHours: List<Int> = listOf(24, 3),
 ) {
@@ -209,6 +213,9 @@ object OrderMessage {
     const val SIZE = "Size"
     const val FLAVOUR = "Flavour"
     const val DATE = "Date needed"
+    /** Lines only the web order form adds. */
+    const val STYLE = "Style"
+    const val EXTRAS = "Extras"
 
     /** The lines of the form, in order, as (emoji, label). */
     fun fields(settings: OrderSettings): List<Pair<String, String>> = buildList {
@@ -252,16 +259,27 @@ object OrderMessage {
     }
 
     /** A new order from a filled-in message; unknown lines go into the notes. */
-    fun toOrder(text: String, settings: OrderSettings, id: String, menuExtras: List<Extra>, today: LocalDate = LocalDate.now()): Order {
+    fun toOrder(
+        text: String,
+        settings: OrderSettings,
+        id: String,
+        menuExtras: List<Extra>,
+        today: LocalDate = LocalDate.now(),
+        levels: List<DesignLevel> = emptyList(),
+    ): Order {
         val f = parseFields(text)
         fun get(label: String) = f[label.lowercase()].orEmpty()
         val yes = setOf("yes", "y", "yeah", "yep", "eggless", "true")
         val eggless = get(Question.EGGLESS.label).lowercase().trim() in yes
         val deliveryText = get(Question.DELIVERY.label)
-        val known = (fields(settings).map { it.second.lowercase() }).toSet()
+        val known = (fields(settings).map { it.second.lowercase() } + listOf(STYLE.lowercase(), EXTRAS.lowercase())).toSet()
         val custom = settings.customQuestions.associateWith { q -> get(q) }.filterValues { it.isNotBlank() }
         val extra = f.filterKeys { it !in known }.map { (k, v) -> "$k: $v" }
         val egglessOption = menuExtras.firstOrNull { it.name.contains("eggless", true) }?.name
+        val picked = get(EXTRAS).split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val extrasChosen = menuExtras.filter { e -> picked.any { it.equals(e.name, true) } }.map { it.name }.toSet()
+        val unknownExtras = picked.filter { p -> menuExtras.none { it.name.equals(p, true) } }
+        val level = get(STYLE).takeIf { it.isNotBlank() }?.let { s -> levels.firstOrNull { it.name.equals(s, true) } }
         return Order(
             id = id,
             customer = get(NAME),
@@ -275,12 +293,13 @@ object OrderMessage {
             designTitle = get(DESIGN),
             size = get(SIZE),
             flavour = get(FLAVOUR),
-            options = if (eggless && egglessOption != null) setOf(egglessOption) else emptySet(),
+            levelId = level?.id,
+            options = extrasChosen + if (eggless && egglessOption != null) setOf(egglessOption) else emptySet(),
             occasion = get(Question.OCCASION.label),
             message = get(Question.MESSAGE.label),
             allergies = get(Question.ALLERGIES.label),
             answers = custom,
-            notes = extra.joinToString("\n"),
+            notes = (extra + unknownExtras.map { "extra: $it" }).joinToString("\n"),
             createdAt = System.currentTimeMillis(),
         )
     }
