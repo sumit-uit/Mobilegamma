@@ -441,11 +441,13 @@ for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
     b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
     if t and b and re.search(r"[0-9]+%,", t.group(1)):
         x1, y1, x2, y2 = map(int, b.groups())
-        if y2 - y1 > 120: continue          # only the one-line caption under a tile
-        c = ((x1 + x2) // 2, y1 - 120)      # a point inside the photo above it
+        # A caption on its own: tap the photo above it. A merged tile node: tap its middle.
+        c = ((x1 + x2) // 2, y1 - 120) if y2 - y1 <= 120 else ((x1 + x2) // 2, (y1 + y2) // 2)
+        if c[1] < 700: continue             # not a tile (banner or chips)
         if all(abs(c[0] - x) > 150 or abs(c[1] - y) > 150 for x, y in seen): seen.append(c)
 for x, y in seen[:2]: print(x, y)
 ')
+  echo "tiles to tap: $tiles"
   while read -r x y; do
     [ -n "$x" ] || continue
     adb shell input tap "$x" "$y"; sleep 1
