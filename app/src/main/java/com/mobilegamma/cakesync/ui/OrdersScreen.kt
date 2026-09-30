@@ -32,6 +32,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mobilegamma.cakesync.menu.MenuData
 import com.mobilegamma.cakesync.menu.Pricing
+import com.mobilegamma.cakesync.Features
 import com.mobilegamma.cakesync.orders.Booking
 import com.mobilegamma.cakesync.orders.Order
 import com.mobilegamma.cakesync.orders.OrderDates
@@ -157,9 +158,9 @@ private fun OrderCard(order: Order, menu: MenuData, viewModel: MainViewModel) {
 /** The order form to send a customer: a link to a fill-in web form, or text to fill in by hand. */
 @Composable
 private fun OrderFormDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
-    var asText by remember { mutableStateOf(false) }
-    val link = remember { viewModel.orderFormLink() }
-    val message = remember { viewModel.orderFormMessage() }
+    var asText by remember { mutableStateOf(!Features.WEB_ORDER_FORM) }
+    val link = remember { if (Features.WEB_ORDER_FORM) viewModel.orderFormLink() else "" }
+    val message = remember { if (Features.WEB_ORDER_FORM) viewModel.orderFormMessage() else "" }
     val template = remember { viewModel.orderFormText() }
     val text = if (asText) template else message
     AlertDialog(
@@ -167,13 +168,13 @@ private fun OrderFormDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
         title = { Text("Order form") },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (Features.WEB_ORDER_FORM) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = !asText, onClick = { asText = false }, label = { Text("Form link") })
                     FilterChip(selected = asText, onClick = { asText = true }, label = { Text("Fill-in text") })
                 }
                 Text(
                     if (asText) {
-                        "Customers copy this, fill it in and send it back. Share their reply into CakeSync and the order fills in by itself."
+                        "Customers copy this, fill it in and send it back. Share their reply into CakeSync and the order fills in by itself. Your booking, menu and social links go along."
                     } else {
                         "Customers tap the link, pick size, flavour and date on a simple form with your prices, and tap Send: " +
                             "it comes straight back to your WhatsApp or email, ready to share into CakeSync. Your booking, menu and social links go along."
@@ -446,8 +447,8 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
                         when (page) {
                             0 -> {
                                 Text(
-                                    "Where do customers reach you? Orders from your web order form are sent to your WhatsApp or email, " +
-                                        "and every link here goes out with the form so customers can book, see your menu and follow you.",
+                                    "Where do customers reach you? Every link here goes out with your order form " +
+                                        "so customers can book, see your menu and follow you.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 OutlinedTextField(value = s.whatsapp, onValueChange = { s = s.copy(whatsapp = it) }, singleLine = true, label = { Text("WhatsApp number (with country code)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
@@ -457,7 +458,10 @@ fun OrderSetupWizard(state: UiState, viewModel: MainViewModel) {
                                 OutlinedTextField(value = s.website, onValueChange = { s = s.copy(website = it) }, singleLine = true, label = { Text("Website (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
                                 OutlinedTextField(value = s.bookingLink, onValueChange = { s = s.copy(bookingLink = it) }, singleLine = true, label = { Text("Booking page link, e.g. Google Calendar (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
                                 OutlinedTextField(value = s.menuLink, onValueChange = { s = s.copy(menuLink = it) }, singleLine = true, label = { Text("Menu link (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
-                                UsedFor("The order form's Send buttons, and the links under it. Your prices from Menu → Prices show on the form, so a menu link is optional.")
+                                UsedFor(
+                                    if (Features.WEB_ORDER_FORM) "The order form's Send buttons, and the links under it. Your prices from Menu → Prices show on the form, so a menu link is optional."
+                                    else "The links sent with your order form, so customers can book, see your menu and follow you.",
+                                )
                             }
                             1 -> {
                                 LabeledNumber("Advance to confirm (%)", s.advancePercent) { s = s.copy(advancePercent = it.coerceIn(0, 100)) }

@@ -51,7 +51,9 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
     Everything the form shows travels in the link, so no server stores anything. Your
     booking page, menu, Instagram, Facebook and website links go out with it. A fill-in
     text version is still there for customers who prefer to reply in the chat.
-    One-time setup: in the repo's Settings → Pages, deploy from branch `main`, folder `/docs`.
+    **Turned off for now** (`Features.WEB_ORDER_FORM`): the app sends the fill-in text with
+    your links instead. To turn it on, set the flag to true and host `docs/` (GitHub Pages:
+    branch `main`, folder `/docs`, or your own domain via `OrderForm.BASE_URL`).
 - **Menu builder:**
   - A price list per category: flavours × sizes (e.g. 6", 8", 10", 12" with servings), from a
     template (round cakes, cupcake packs, by weight) or pasted straight from your website's

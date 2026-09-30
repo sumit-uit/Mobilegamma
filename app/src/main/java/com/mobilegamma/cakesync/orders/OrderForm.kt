@@ -113,10 +113,15 @@ object OrderForm {
         append(if (design.isNotBlank()) "Order the $design" else "Order a cake")
         if (business.isNotBlank()) append(" from $business")
         append("\n\n📝 Fill in our quick order form (1 minute):\n$formLink\n")
-        webUrl(settings.bookingLink)?.let { append("\n📅 Book a pickup time: $it") }
-        webUrl(settings.menuLink)?.let { append("\n📋 Menu & prices: $it") }
-        instagramUrl(settings.instagram)?.let { append("\n📷 Instagram: $it") }
-        facebookUrl(settings.messengerPage)?.let { append("\n👍 Facebook: $it") }
-        webUrl(settings.website)?.let { append("\n🌐 $it") }
+        links(settings).takeIf { it.isNotEmpty() }?.let { append("\n$it") }
     }.trimEnd()
+
+    /** The bakery's booking, menu and social links, one per line ("" when there are none). */
+    fun links(settings: OrderSettings): String = listOfNotNull(
+        webUrl(settings.bookingLink)?.let { "📅 Book a pickup time: $it" },
+        webUrl(settings.menuLink)?.let { "📋 Menu & prices: $it" },
+        instagramUrl(settings.instagram)?.let { "📷 Instagram: $it" },
+        facebookUrl(settings.messengerPage)?.let { "👍 Facebook: $it" },
+        webUrl(settings.website)?.let { "🌐 $it" },
+    ).joinToString("\n")
 }

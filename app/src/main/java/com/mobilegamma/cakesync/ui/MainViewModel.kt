@@ -356,9 +356,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun orderFormMessage(design: String = ""): String =
         OrderForm.shareText(orderContacts(), brandKit().businessName, orderFormLink(design), design)
 
-    /** The fill-in-the-blanks text, for customers who'd rather reply in the chat. */
-    fun orderFormText(design: String = ""): String =
-        OrderMessage.template(orderStore.load().settings, brandKit().businessName, design)
+    /** The fill-in-the-blanks text customers copy, fill in and send back, plus the bakery's links. */
+    fun orderFormText(design: String = ""): String {
+        val template = OrderMessage.template(orderStore.load().settings, brandKit().businessName, design)
+        val links = OrderForm.links(orderContacts())
+        return if (links.isEmpty()) template else "$template\n\n$links"
+    }
 
     fun copyText(label: String, text: String) {
         getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)

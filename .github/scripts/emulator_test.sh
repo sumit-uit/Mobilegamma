@@ -573,7 +573,8 @@ shot 10f-orders-list
 if tap_text "Order form"; then
   sleep 2
   shot 10f2-order-form-link
-  if dump_ui | grep -q "sumit-uit.github.io/Mobilegamma/order/#z"; then echo "PASS: order form link shown"; else echo "NOTE: order form link not seen"; fi
+  # The web form link is behind Features.WEB_ORDER_FORM (off): expect the fill-in text.
+  if dump_ui | grep -q "Name:"; then echo "PASS: order form text shown"; else echo "NOTE: order form text not seen"; fi
   tap_exact "Close" || adb shell input keyevent KEYCODE_BACK
   sleep 1
 fi
