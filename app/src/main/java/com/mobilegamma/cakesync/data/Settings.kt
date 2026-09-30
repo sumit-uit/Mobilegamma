@@ -34,6 +34,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_WIFI, true)
         set(value) = prefs.edit { putBoolean(KEY_WIFI, value) }
 
+    /** The first-run introduction has been shown (or skipped). */
+    var onboarded: Boolean
+        get() = prefs.getBoolean(KEY_ONBOARDED, false)
+        set(value) = prefs.edit { putBoolean(KEY_ONBOARDED, value) }
+
     var dailySyncEnabled: Boolean
         get() = prefs.getBoolean(KEY_DAILY, false)
         set(value) = prefs.edit { putBoolean(KEY_DAILY, value) }
@@ -100,6 +105,7 @@ class Settings(context: Context) {
         const val KEY_HOUR = "upload_hour"
         const val KEY_WIFI = "wifi_only"
         const val KEY_DAILY = "daily_sync"
+        const val KEY_ONBOARDED = "onboarded"
         const val KEY_APPROVAL = "require_approval"
         const val KEY_SCAN_DAYS = "scan_days"
         const val KEY_EXCLUDE_PEOPLE = "exclude_people"

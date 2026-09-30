@@ -72,6 +72,45 @@ tap_text() {
   adb shell input tap $pos
 }
 
+# Swipes up until text containing $1 is on screen (max 8 swipes).
+scroll_to_text() {
+  local i
+  for i in 1 2 3 4 5 6 7 8; do
+    [ -n "$(find_text "$1")" ] && return 0
+    adb shell input swipe 540 1700 540 900 300; sleep 1
+  done
+  [ -n "$(find_text "$1")" ]
+}
+
+# Taps a bottom-navigation item (Home, Gallery, Create, Settings): the lowest exact match.
+nav() {
+  local pos
+  pos=$(dump_ui | python3 -c '
+import re, sys
+needle = sys.argv[1]; best = None
+for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
+    node = m.group(0)
+    t = re.search(r" text=\"([^\"]*)\"", node)
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
+    if t and b and t.group(1) == needle:
+        x1, y1, x2, y2 = map(int, b.groups())
+        if best is None or y1 > best[1]: best = ((x1 + x2) // 2, (y1 + y2) // 2)
+if best: print(best[0], best[1])
+' "$1")
+  if [ -z "$pos" ]; then echo "nav '$1' not found"; return 1; fi
+  echo "nav '$1' at $pos"; adb shell input tap $pos; sleep 2
+}
+
+# Long-presses the first photo tile (found by its "Label NN%," caption) to start a selection.
+select_first_photo() {
+  local label pos
+  label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+  [ -n "$label" ] || { echo "no photo tile on screen"; return 1; }
+  pos=$(find_text "$label"); set -- $pos
+  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+  sleep 2
+}
+
 wait_for_text() {
   local text=$1 timeout=${2:-60} waited=0
   until [ -n "$(find_text "$text")" ]; do
@@ -133,6 +172,11 @@ else
     echo "FAIL: video access neither granted nor requested"; echo "$ui" | grep -oE ' text="[^"]+"' | head -20; exit 1
   fi
 fi
+echo "== First-run intro"
+shot 00b-intro-1
+if tap_text "Next"; then sleep 2; shot 00c-intro-2; tap_text "Next" || true; sleep 2; shot 00d-intro-3; fi
+tap_text "Get started" || tap_text "Skip" || true
+sleep 2
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_VIDEO
 adb shell am force-stop "$PKG"
 adb shell am start -W -n "$PKG/.ui.MainActivity"
@@ -163,46 +207,49 @@ for name, match, score, faces, video, labels in db.execute(
     print(f"{'MATCH' if match else '     '} {kind} {name:12} cake={score:.2f} faces={faces}{skip}  {labels}")
 PY
 
-echo "== Labels seen on all photos"
+echo "== Gallery tabs"
+nav Gallery || true
 tap_text "All scanned"
 sleep 3
 shot 03-all-scanned
-
-echo "== Videos tab"
 tap_text "Videos" || true
 sleep 3
 shot 03b-videos-tab
-
-echo "== Toggle a photo (exclude/include)"
 tap_text "Matches" || true
 sleep 2
+shot 03c-gallery
+
+echo "== Photo viewer: tap a photo, exclude/include it"
 first_label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
 if [ -n "$first_label" ]; then
-  pos=$(find_text "$first_label")
-  # tap the image just above its label
-  set -- $pos
+  pos=$(find_text "$first_label"); set -- $pos
   adb shell input tap "$1" "$(( $2 - 150 ))"
   sleep 2
-  shot 04-after-toggle
+  shot 04-photo-viewer
+  tap_exact "Exclude" || tap_exact "Include" || true
+  sleep 2
+  shot 04b-after-toggle
+  adb shell input keyevent KEYCODE_BACK
+  sleep 1
 fi
 
-echo "== Open settings"
-tap_text "Settings" || true
-sleep 2
+echo "== Settings"
+nav Settings || true
 shot 05-settings
-
-echo "== Folder picker"
-adb shell input swipe 540 1800 540 700 300 || true
-sleep 2
-if tap_text "Choose"; then
+picker=1
+for i in 1 2 3 4 5 6 7 8; do
+  if tap_exact "Choose"; then picker=0; break; fi
+  adb shell input swipe 540 1700 540 900 300; sleep 1
+done
+if [ "$picker" -eq 0 ]; then
   sleep 3
   shot 05b-folder-picker
   dump_ui | grep -oE 'text="[^"]*\([0-9]+\)"' | tee "$OUT/folders.txt" || true
   tap_text "Cancel" || adb shell input keyevent KEYCODE_BACK
   sleep 1
 fi
-adb shell input swipe 540 700 540 1800 300 || true
-sleep 1
+scroll_top() { for i in 1 2 3 4 5 6; do adb shell input swipe 540 700 540 1900 200; sleep 0.4; done; }
+scroll_top
 
 echo "== Categories: add a 'Beach' category through the UI"
 category_ok=1
@@ -231,21 +278,28 @@ PY
   fi
   shot 05d-after-category
 fi
-adb shell input swipe 540 700 540 1800 300 || true
-sleep 1
+
+echo "== Branding: business name in the brand kit"
+brand_ok=1
+if scroll_to_text "Business name"; then
+  tap_text "Business name" && adb shell input text "Soni%sBakes"
+  sleep 1
+  hide_keyboard
+  tap_text "Save name" || true
+  sleep 1
+  shot 05i-brand-kit
+  scroll_to_text "Preview" || true
+  adb shell input swipe 540 1500 540 1000 300; sleep 3
+  shot 05i2-brand-preview
+  if dump_ui | grep -q 'text="Preview"'; then echo "PASS: brand kit shows a preview"; else echo "NOTE: brand preview not found on screen"; fi
+fi
 
 echo "== Orders: long-press a photo, tag it 'Order 1 - Test'"
 order_ok=1
-tap_text "Settings" || true   # collapse settings so the photos are on screen
-sleep 2
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label")
-  set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900   # long-press the image
-  sleep 2
+nav Gallery || true
+if select_first_photo; then
   shot 05e-selection
-  if tap_text "Order…"; then
+  if tap_exact "Order"; then
     sleep 2
     tap_text "Order name" && adb shell input text "Order%s1%s-%sTest"
     sleep 1
@@ -256,69 +310,33 @@ if [ -n "$label" ]; then
     adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos-order.db" || true
     adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos-order.db-wal" 2>/dev/null || true
     if python3 -c "
-import sqlite3,sys
+import sqlite3, sys
 n=sqlite3.connect('$OUT/photos-order.db').execute(\"SELECT COUNT(*) FROM photos WHERE order_tag='Order 1 - Test'\").fetchone()[0]
 print('tagged photos:', n); sys.exit(0 if n>0 else 1)"; then echo "PASS: order tag saved"; order_ok=0
     else echo "FAIL: order tag not saved"; fi
   fi
 fi
 
-echo "== Crop: select a photo, save a 1:1 Instagram copy"
+echo "== Crop: select all, save 1:1 Instagram copies"
 crop_ok=1
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
-  tap_exact "All" || true   # select every shown item; videos are skipped by the editor
+if select_first_photo; then
+  tap_exact "All" || true
   sleep 1
-  adb shell input swipe 540 1700 540 1100 400   # bring the wrapped action buttons on screen
-  sleep 1
-  if tap_text "Crop…"; then
+  if tap_exact "Crop"; then
     sleep 2
     tap_text "1:1 Instagram post" || true
     sleep 8
     shot 05g-after-crop
     squares=$(adb shell "content query --uri content://media/external/images/media --projection _display_name:width:height:relative_path" \
       | grep "Pictures/CakeSync" | tee "$OUT/edited.txt" | grep -c "width=1080, height=1080" || true)
-    cat "$OUT/edited.txt"
     if [ "${squares:-0}" -ge 1 ]; then echo "PASS: 1:1 crop saved"; crop_ok=0; else echo "FAIL: no 1:1 crop found"; fi
   fi
 fi
 
-scroll_top() { for i in 1 2 3 4; do adb shell input swipe 540 700 540 1900 200; sleep 0.5; done; }
-scroll_top
-
-echo "== Branding: business name in the brand kit, then brand selected photos with a price"
-brand_ok=1
-if tap_text "Settings"; then
-  sleep 2
-  adb shell input swipe 540 1700 540 900 400; sleep 1
-  if tap_text "Brand kit"; then
-    sleep 2
-    tap_text "Business name" && adb shell input text "Soni%sBakes"
-    sleep 1
-    hide_keyboard
-    tap_text "Save name" || true
-    sleep 1
-    shot 05i-brand-kit
-    adb shell input swipe 540 1700 540 900 400; sleep 3
-    shot 05i2-brand-preview
-    if dump_ui | grep -q 'text="Preview"'; then echo "PASS: brand kit shows a preview"; else echo "NOTE: brand preview not found on screen"; fi
-  fi
-  scroll_top
-  tap_text "Settings" || true   # collapse again
-  sleep 2
-fi
-adb shell input swipe 540 1700 540 900 400; sleep 1
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
+echo "== Brand: select all, brand with a price"
+if select_first_photo; then
   tap_exact "All" || true
-  adb shell input swipe 540 1700 540 1100 400; sleep 1
-  if tap_text "Brand…"; then
+  if tap_exact "Brand"; then
     sleep 2
     tap_text "Price or text" && adb shell input text "Rs%s1200"
     sleep 1
@@ -327,24 +345,16 @@ if [ -n "$label" ]; then
     shot 05i3-brand-dialog-preview
     tap_text "Save copies" || true
     sleep 10
-    branded=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_branded.jpg" || true)
+    branded=$(adb shell "content query --uri content://media/external/images/media --projection _display_name" | grep -c "_branded" || true)
     echo "branded copies: $branded"
     if [ "${branded:-0}" -ge 1 ]; then echo "PASS: branded copies saved"; brand_ok=0; else echo "FAIL: no branded copies"; fi
   fi
 fi
-scroll_top
-adb shell input swipe 540 1700 540 900 400   # bring the first photos on screen
-sleep 1
 
-echo "== Share: select photos, Share… → Other apps… opens the Android share sheet"
+echo "== Share: Share → Other apps opens the Android share sheet"
 share_ok=1
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
-  adb shell input swipe 540 1700 540 1100 400; sleep 1
-  if tap_text "Share…"; then
+if select_first_photo; then
+  if tap_exact "Share"; then
     sleep 2
     shot 05j-share-dialog
     dump_ui | grep -oE 'text="[^"]*#[^"]*"' | head -3 | tee "$OUT/caption.txt" || true
@@ -357,19 +367,13 @@ if [ -n "$label" ]; then
     adb shell am start -n "$PKG/.ui.MainActivity" >/dev/null; sleep 3
   fi
 fi
-scroll_top
-adb shell input swipe 540 1700 540 900 400; sleep 1
 
 echo "== Reel: select all, make a reel (defaults: mixed transitions, built-in Happy music)"
 reel_ok=1
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
+nav Gallery || true
+if select_first_photo; then
   tap_exact "All" || true
-  adb shell input swipe 540 1700 540 1100 400; sleep 1
-  if tap_text "Reel…"; then
+  if tap_exact "Reel"; then
     sleep 2
     shot 05l-reel-dialog
     tap_text "Make reel" || true
@@ -379,9 +383,6 @@ if [ -n "$label" ]; then
       [ -n "$reels" ] && break
     done
     echo "$reels" | tee "$OUT/reels.txt"
-    scroll_top
-    dump_ui | grep -oE 'text="(Reel saved|Could not make)[^"]*"' | tee -a "$OUT/reels.txt" || true
-    shot 05l-after-reel
     if [ -n "$reels" ]; then echo "PASS: reel saved"; reel_ok=0; else echo "FAIL: no reel saved"; fi
   fi
 fi
@@ -391,30 +392,26 @@ reel_path=$(adb shell "content query --uri content://media/external/video/media 
 if [ -n "$reel_path" ] && adb pull "$reel_path" "$OUT/reel.mp4" >/dev/null; then
   ffprobe -v error -show_entries stream=codec_type,width,height:stream_side_data=rotation:format=duration -of default=nw=1 "$OUT/reel.mp4" | tee "$OUT/reel_probe.txt"
   if grep -q "codec_type=audio" "$OUT/reel_probe.txt"; then echo "PASS: reel has the built-in music"; else echo "FAIL: reel has no audio track"; reel_ok=1; fi
-  if grep -q "width=1080" "$OUT/reel_probe.txt" && grep -q "height=1920" "$OUT/reel_probe.txt"; then echo "PASS: reel is 1080x1920"
-  else echo "NOTE: reel size is not 1080x1920 (see reel_probe.txt)"; fi
   for t in 0.03 1.2; do
     y=$(ffmpeg -hide_banner -loglevel info -ss "$t" -i "$OUT/reel.mp4" -frames:v 1 -vf signalstats,metadata=print:key=lavfi.signalstats.YAVG -f null - 2>&1 \
       | grep -oE 'YAVG=[0-9.]+' | head -1 || true)
     echo "brightness at ${t}s: $y" | tee -a "$OUT/reel_probe.txt"
-    ffmpeg -v error -y -ss "$t" -i "$OUT/reel.mp4" -frames:v 1 "$OUT/05m-reel-frame-${t}s.png" || true
   done
-else
-  echo "NOTE: could not pull the reel"
 fi
 
-echo "== Created tab: the View results button opens it and lists the reel"
+echo "== Home shows the result; View results opens the Created tab"
 created_ok=1
-scroll_top
-if tap_text "View results"; then
+nav Home || true
+sleep 1
+shot 05m-home-after-reel
+dump_ui | grep -oE 'text="(Reel saved|Could not make)[^"]*"' | tee -a "$OUT/reels.txt" || true
+if scroll_to_text "View results" && tap_text "View results"; then
   sleep 3
   shot 05n-created-tab
   ui=$(dump_ui)
   if echo "$ui" | grep -qE 'text="(&#127916;|🎬) Reel"'; then echo "PASS: Created tab lists the reel"; created_ok=0; else echo "FAIL: reel not in Created tab"; fi
   echo "$ui" | grep -oE 'text="[^"]*(Reel|Branded|crop|filter|Collage)[^"]*"' | head -10 | tee "$OUT/created.txt" || true
-  # Tap the first creation: the dialog offers open/share/delete.
-  adb shell input swipe 540 1700 540 1100 400; sleep 1
-  pos=$(find_text "; Reel" || find_text "🎬 Reel" || true)
+  pos=$(find_text "; Reel" || true)
   if [ -n "$pos" ]; then
     set -- $pos
     adb shell input tap "$1" "$(( $2 - 150 ))"; sleep 2
@@ -426,25 +423,23 @@ if tap_text "View results"; then
 else
   echo "FAIL: no View results button after the reel"
 fi
-scroll_top
-tap_text "Matches" || true
-sleep 2
-adb shell input swipe 540 1700 540 900 400; sleep 1
 
-echo "== Collage: select all, pick a layout, save"
+echo "== Create hub → Collage: pick two photos, continue, save"
 collage_ok=1
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
+nav Create || true
+shot 05p-create-hub
+if tap_text "2 to 9 photos"; then
   sleep 2
-  tap_exact "All" || true
-  adb shell input swipe 540 1700 540 1100 400; sleep 1
-  if tap_text "Collage…"; then
+  shot 05p2-pick-photos
+  labels=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -2 | sed -E 's/text="([^"]*)"/\1/' || true)
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    pos=$(find_text "$l"); set -- $pos
+    adb shell input tap "$1" "$(( $2 - 150 ))"; sleep 1
+  done <<< "$labels"
+  shot 05p3-picked
+  if tap_text "Continue:"; then
     sleep 5
-    shot 05p-collage-dialog
-    tap_text "2 side by side" || true
-    sleep 3
     shot 05q-collage-preview
     tap_text "Save collage" || true
     sleep 10
@@ -453,18 +448,14 @@ if [ -n "$label" ]; then
     if [ "${n:-0}" -ge 1 ]; then echo "PASS: collage saved"; collage_ok=0; else echo "FAIL: no collage saved"; fi
   fi
 fi
-scroll_top
-adb shell input swipe 540 1700 540 900 400; sleep 1
 
-echo "== Filter: select all, preview a filter, save copies"
+echo "== Filter: select a photo, preview a filter, save"
 filter_ok=1
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
-  adb shell input swipe 540 1700 540 1100 400; sleep 1
-  if tap_text "Filter…"; then
+nav Gallery || true
+tap_text "Matches" || true
+sleep 2
+if select_first_photo; then
+  if tap_exact "Filter"; then
     sleep 3
     tap_exact "Bright" || true
     sleep 3
@@ -476,31 +467,28 @@ if [ -n "$label" ]; then
     if [ "${n:-0}" -ge 1 ]; then echo "PASS: filtered copy saved"; filter_ok=0; else echo "FAIL: no filtered copy"; fi
   fi
 fi
-scroll_top
-adb shell input swipe 540 1700 540 900 400; sleep 1
 
 echo "== White background (needs the Play services model; reported, not required)"
-label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$label" ]; then
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
-  adb shell input swipe 540 1700 540 1100 400
-  sleep 1
-  if tap_text "White background"; then
-    sleep 20
-    shot 05h-after-white-background
-    scroll_top
-    dump_ui | grep -oE 'text="White background:[^"]*"' | tee "$OUT/white_background.txt" || true
-  else
-    echo "White background button not found" | tee "$OUT/white_background.txt"
-  fi
+if select_first_photo && tap_exact "White bg"; then
+  sleep 20
+  nav Home || true
+  dump_ui | grep -oE 'text="White background:[^"]*"' | tee "$OUT/white_background.txt" || true
+  shot 05h-after-white-background
 fi
 check_no_crash
-scroll_top
+
+echo "== Dark mode"
+adb shell cmd uimode night yes || true
+sleep 3
+nav Home || true
+shot 07-home-dark
+nav Create || true
+shot 07b-create-dark
+adb shell cmd uimode night no || true
+sleep 3
 
 echo "== Connect Drive (no Google account on the emulator: expect an error message, not a crash)"
-adb shell input keyevent KEYCODE_MOVE_HOME
+nav Home || true
 tap_text "Connect" || true
 sleep 8
 shot 06-connect-drive

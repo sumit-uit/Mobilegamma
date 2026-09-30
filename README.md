@@ -25,6 +25,10 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   a photo to include it anyway.
 - **Review grid:** tap a photo to include or exclude it. "All scanned" lets you
   include photos the detector missed. You can also require approval before upload.
+- **Design:** a bakery theme (raspberry, caramel and cream, serif headings, light and dark),
+  bottom navigation (Home · Gallery · Create · Settings), a first-run intro, a Home page with
+  your numbers and shortcuts, a full-screen photo viewer, and a Create hub where you pick a tool
+  and then the photos.
 - **Created tab:** reels, collages and edited copies (filter, brand, crop, white background)
   all appear under ✨ Created, where you can open, share or delete them. They are also in the
   Gallery under Pictures/CakeSync and Movies/CakeSync. A "View results" button appears after

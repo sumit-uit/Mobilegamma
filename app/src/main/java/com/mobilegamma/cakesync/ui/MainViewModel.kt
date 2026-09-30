@@ -80,6 +80,12 @@ data class UiState(
     val brandVersion: Int = 0,
     /** An edit or reel just finished: offer a shortcut to the Created tab. */
     val resultsReady: Boolean = false,
+    /** Newest matched photos and videos, for the home screen. */
+    val recent: List<Photo> = emptyList(),
+    val matchCount: Int = 0,
+    val createdCount: Int = 0,
+    /** Whether the first-run introduction still needs showing (null = not loaded yet). */
+    val showIntro: Boolean? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -109,15 +115,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val tab = _state.value.tab
             val filter = _state.value.categoryFilter
-            val (photos, pending) = withContext(Dispatchers.IO) {
-                when (tab) {
-                    GridTab.MATCHES -> store.matches()
-                    GridTab.VIDEOS -> store.matches().filter { it.isVideo }
+            val loaded = withContext(Dispatchers.IO) {
+                val matches = store.matches()
+                val created = runCatching { Creations.list(getApplication()) }.getOrDefault(emptyList())
+                val photos = when (tab) {
+                    GridTab.MATCHES -> matches
+                    GridTab.VIDEOS -> matches.filter { it.isVideo }
                     GridTab.ALL -> store.all()
-                    GridTab.CREATED -> Creations.list(getApplication())
-                }.filter { tab == GridTab.CREATED || filter == null || it.category == filter } to
-                    store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
+                    GridTab.CREATED -> created
+                }.filter { tab == GridTab.CREATED || filter == null || it.category == filter }
+                val pending = store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
+                Loaded(photos, pending, matches.sortedByDescending { it.takenAtMillis }.take(12), matches.size, created.size)
             }
+            val (photos, pending) = loaded.photos to loaded.pending
             _state.update {
                 it.copy(
                     hasPhotoPermission = SyncWorker.hasPhotoPermission(getApplication()),
@@ -125,12 +135,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     driveConnected = settings.driveConnected,
                     photos = photos,
                     pendingCount = pending,
+                    recent = loaded.recent,
+                    matchCount = loaded.matchCount,
+                    createdCount = loaded.createdCount,
+                    showIntro = it.showIntro ?: !settings.onboarded,
                     message = it.message ?: settings.lastSyncMessage,
                     settings = readSettings(),
                 )
             }
         }
     }
+
+    private data class Loaded(
+        val photos: List<Photo>,
+        val pending: Int,
+        val recent: List<Photo>,
+        val matchCount: Int,
+        val createdCount: Int,
+    )
+
+    /** Ends the first-run introduction, optionally saving the business name. */
+    fun finishIntro(businessName: String?) {
+        settings.onboarded = true
+        businessName?.trim()?.takeIf { it.isNotEmpty() }?.let { saveBrandKit(brandKit().copy(businessName = it)) }
+        _state.update { it.copy(showIntro = false) }
+    }
+
+    fun showIntroAgain() = _state.update { it.copy(showIntro = true) }
+
+    /** Starts a selection with [photo] (from the photo viewer). */
+    fun selectOnly(photo: Photo) = _state.update { it.copy(selected = setOf(photo.mediaId)) }
 
     fun setTab(tab: GridTab) {
         _state.update { it.copy(tab = tab, selected = emptySet(), resultsReady = if (tab == GridTab.CREATED) false else it.resultsReady) }

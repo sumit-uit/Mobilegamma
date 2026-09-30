@@ -1,0 +1,489 @@
+package com.mobilegamma.cakesync.ui
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import com.mobilegamma.cakesync.data.Categories
+import com.mobilegamma.cakesync.data.Category
+import com.mobilegamma.cakesync.edit.ColorFilterPreset
+import com.mobilegamma.cakesync.edit.LogoPosition
+import com.mobilegamma.cakesync.scan.PhotoScanner
+import com.mobilegamma.cakesync.share.Captions
+import java.security.MessageDigest
+
+/** All settings, grouped into cards. */
+@Composable
+fun SettingsScreen(
+    state: UiState,
+    viewModel: MainViewModel,
+    onConnectDrive: () -> Unit,
+    onShowIntro: () -> Unit,
+) {
+    val s = state.settings ?: return
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        ScreenTitle("Settings", "Make CakeSync work your way")
+
+        Section("🎂", "Categories") {
+            var editing by remember { mutableStateOf<Category?>(null) }
+            s.categories.forEach { category ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(category.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Labels: ${category.labels} · ${(category.threshold * 100).toInt()}% · Drive: ${category.driveFolder}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = {
+                        viewModel.portfolioLink(category) { link ->
+                            context.getSystemService(ClipboardManager::class.java)
+                                .setPrimaryClip(ClipData.newPlainText("Portfolio", link))
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).setType("text/plain")
+                                        .putExtra(Intent.EXTRA_TEXT, "${category.name} gallery: $link"),
+                                    "Share portfolio link",
+                                )
+                            )
+                        }
+                    }) { Text("🔗 Link") }
+                    TextButton(onClick = { editing = category; viewModel.loadSeenLabels() }) { Text("Edit") }
+                }
+            }
+            FilledTonalButton(onClick = {
+                editing = Category(Categories.newId(), "", "", 0.6f, "")
+                viewModel.loadSeenLabels()
+            }) { Text("+ Add category") }
+            editing?.let { category ->
+                CategoryDialog(
+                    initial = category,
+                    isNew = s.categories.none { it.id == category.id },
+                    canDelete = s.categories.size > 1,
+                    suggestions = state.seenLabels,
+                    onDismiss = { editing = null },
+                    onSave = { viewModel.saveCategory(it); editing = null },
+                    onDelete = { viewModel.deleteCategory(category.id); editing = null },
+                )
+            }
+        }
+
+        Section("🏷", "Brand kit") {
+            val sample = state.recent.firstOrNull { !it.isVideo }?.uri
+            BrandKitSection(state.brandVersion, sample, viewModel)
+        }
+
+        Section("☁️", "Google Drive") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (state.driveConnected) "Connected: uploads go to your Drive" else "Not connected yet",
+                    Modifier.weight(1f),
+                )
+                if (!state.driveConnected) Button(onClick = onConnectDrive) { Text("Connect") }
+            }
+            if (!state.driveConnected) {
+                val identity = remember { appIdentity(context) }
+                SelectionContainer {
+                    Text(
+                        "For Google Cloud → Android OAuth client:\n$identity",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Section("⏰", "Daily upload") {
+            SwitchRow("Upload automatically every day", s.dailySyncEnabled) {
+                viewModel.updateSettings { dailySyncEnabled = it }
+            }
+            var hour by remember(s.uploadHour) { mutableFloatStateOf(s.uploadHour.toFloat()) }
+            Text("Daily upload time: %02d:00".format(hour.toInt()))
+            Slider(
+                value = hour,
+                onValueChange = { hour = it },
+                onValueChangeFinished = { viewModel.updateSettings { uploadHour = hour.toInt() } },
+                valueRange = 0f..23f,
+                steps = 22,
+            )
+            SwitchRow("Wi-Fi only", s.wifiOnly) { viewModel.updateSettings { wifiOnly = it } }
+            SwitchRow("Only upload photos I've approved", s.requireApproval) {
+                viewModel.updateSettings { requireApproval = it }
+            }
+        }
+
+        Section("🔍", "Detection") {
+            SwitchRow("Skip photos with people (face detection)", s.excludePeople) {
+                viewModel.updateSettings { excludePeople = it }
+            }
+            SwitchRow("Keep only the best shot (skip near-duplicates)", s.skipDuplicates) {
+                viewModel.updateSettings { skipDuplicates = it }
+            }
+            SwitchRow("Include videos", s.includeVideos) {
+                viewModel.updateSettings { includeVideos = it }
+            }
+        }
+
+        Section("📁", "Photos to scan") {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SCAN_WINDOWS.forEach { days ->
+                    FilterChip(
+                        selected = s.scanDays == days,
+                        onClick = { viewModel.updateSettings { scanDays = days } },
+                        label = { Text(scanWindowLabel(days)) },
+                    )
+                }
+            }
+            var showPicker by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Folders: ${folderSummary(s.scanFolders)}", Modifier.weight(1f))
+                TextButton(onClick = { showPicker = true; viewModel.loadFolders() }) { Text("Choose") }
+            }
+            if (showPicker) {
+                FolderPickerDialog(
+                    folders = state.folders,
+                    selected = s.scanFolders,
+                    onDismiss = { showPicker = false },
+                    onSave = { chosen ->
+                        viewModel.updateSettings { scanFolders = chosen }
+                        showPicker = false
+                    },
+                )
+            }
+        }
+
+        Section("ℹ️", "About") {
+            val version = remember {
+                runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+            }
+            Text("CakeSync ${version?.let { "v$it" } ?: ""}", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Photos are checked on your phone. Only the ones you choose go to your Google Drive.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onShowIntro) { Text("Show the intro again") }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** Big serif page title with a one-line subtitle. */
+@Composable
+fun ScreenTitle(title: String, subtitle: String) {
+    Column(Modifier.padding(top = 12.dp, bottom = 2.dp)) {
+        Text(title, style = MaterialTheme.typography.headlineMedium)
+        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** A rounded card with an emoji heading. */
+@Composable
+fun Section(emoji: String, title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(emoji, fontSize = 20.sp)
+                Spacer(Modifier.width(10.dp))
+                Text(title, style = MaterialTheme.typography.titleLarge)
+            }
+            content()
+        }
+    }
+}
+
+/** Package name, version and signing-certificate SHA-1 of the installed app. */
+internal fun appIdentity(context: Context): String = try {
+    val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+    val signers = info.signingInfo?.apkContentsSigners.orEmpty()
+    val sha1 = signers.firstOrNull()?.let { sig ->
+        MessageDigest.getInstance("SHA-1").digest(sig.toByteArray())
+            .joinToString(":") { "%02X".format(it) }
+    } ?: "unknown"
+    "Package: ${context.packageName}\nSHA-1: $sha1\nVersion: ${info.versionName}"
+} catch (e: Exception) {
+    "Could not read app signature: ${e.message}"
+}
+
+@Composable
+internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+private val SCAN_WINDOWS = listOf(7, 30, 365, 0)
+
+private fun scanWindowLabel(days: Int) = when (days) {
+    0 -> "All photos"
+    365 -> "Last year"
+    else -> "Last $days days"
+}
+
+private fun folderSummary(folders: Set<String>) = when {
+    folders.isEmpty() -> "all folders"
+    folders.size <= 2 -> folders.joinToString { folderName(it) }
+    else -> "${folders.size} folders"
+}
+
+/** "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/" -> "WhatsApp Images" */
+private fun folderName(path: String) = path.trimEnd('/').substringAfterLast('/').ifEmpty { path }
+
+@Composable
+private fun FolderPickerDialog(
+    folders: List<PhotoScanner.Folder>?,
+    selected: Set<String>,
+    onDismiss: () -> Unit,
+    onSave: (Set<String>) -> Unit,
+) {
+    var chosen by remember { mutableStateOf(selected) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Folders to scan") },
+        text = {
+            Column {
+                Text(
+                    "Nothing ticked = scan every folder.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (folders == null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                } else if (folders.isEmpty()) {
+                    Text("No photo folders found.", Modifier.padding(top = 8.dp))
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 400.dp).padding(top = 8.dp)) {
+                        items(folders, key = { it.path }) { folder ->
+                            val checked = folder.path in chosen
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { chosen = if (checked) chosen - folder.path else chosen + folder.path },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null)
+                                Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                                    Text("${folderName(folder.path)} (${folder.count})")
+                                    Text(
+                                        folder.path,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(chosen) }) { Text("Save") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { chosen = emptySet() }) { Text("Clear") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun CategoryDialog(
+    initial: Category,
+    isNew: Boolean,
+    canDelete: Boolean,
+    suggestions: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (Category) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initial.name) }
+    var labels by remember { mutableStateOf(initial.labels) }
+    var folder by remember { mutableStateOf(initial.driveFolder) }
+    var threshold by remember { mutableFloatStateOf(initial.threshold) }
+    var hashtags by remember { mutableStateOf(initial.hashtags) }
+    var captionTemplate by remember { mutableStateOf(initial.captionTemplate.ifBlank { Captions.DEFAULT_TEMPLATE }) }
+    val chosen = labels.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isNew) "New category" else "Edit ${initial.name}") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it }, singleLine = true,
+                    label = { Text("Name, e.g. Cupcakes") }, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = labels, onValueChange = { labels = it },
+                    label = { Text("Labels to match (comma-separated)") }, modifier = Modifier.fillMaxWidth(),
+                )
+                if (suggestions.isNotEmpty()) {
+                    Text("Labels seen in your photos (tap to add):", style = MaterialTheme.typography.labelSmall)
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        suggestions.filter { it !in chosen }.take(25).forEach { label ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { labels = (chosen + label).joinToString(", ") },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+                Text("Minimum confidence: ${(threshold * 100).toInt()}%")
+                Slider(value = threshold, onValueChange = { threshold = it }, valueRange = 0.3f..0.95f)
+                OutlinedTextField(
+                    value = folder, onValueChange = { folder = it }, singleLine = true,
+                    label = { Text("Drive folder") }, placeholder = { Text(name.ifBlank { "Folder name" }) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = hashtags, onValueChange = { hashtags = it },
+                    label = { Text("Hashtags for captions, e.g. homebaker cake pune") }, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = captionTemplate, onValueChange = { captionTemplate = it }, minLines = 3,
+                    label = { Text("Caption template") }, modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Placeholders: ${Captions.PLACEHOLDERS.joinToString(" ")}",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                if (!isNew && canDelete) {
+                    TextButton(onClick = onDelete) { Text("Delete this category") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank() && chosen.isNotEmpty(),
+                onClick = {
+                    onSave(
+                        initial.copy(
+                            name = name.trim(),
+                            labels = chosen.joinToString(", "),
+                            threshold = threshold,
+                            driveFolder = folder.trim().ifBlank { name.trim() },
+                            hashtags = Captions.normaliseHashtags(hashtags),
+                            captionTemplate = captionTemplate.trim().takeIf { it != Captions.DEFAULT_TEMPLATE }.orEmpty(),
+                        )
+                    )
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainViewModel) {
+    val kit = remember(brandVersion) { viewModel.brandKit() }
+    val pickLogo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.setBrandLogo(uri)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (kit.logo != null) {
+                AsyncImage(
+                    model = coil3.request.ImageRequest.Builder(LocalContext.current)
+                        .data(kit.logo).memoryCacheKey("logo-$brandVersion").diskCacheKey("logo-$brandVersion").build(),
+                    contentDescription = "Logo",
+                    modifier = Modifier.size(56.dp),
+                )
+            }
+            OutlinedButton(onClick = {
+                pickLogo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }) { Text(if (kit.logo == null) "Choose logo" else "Change logo") }
+            if (kit.logo != null) TextButton(onClick = { viewModel.setBrandLogo(null) }) { Text("Remove") }
+        }
+        Text("Logo position", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LogoPosition.entries.forEach { p ->
+                FilterChip(
+                    selected = kit.position == p,
+                    onClick = { viewModel.saveBrandKit(kit.copy(position = p)) },
+                    label = { Text(p.label) },
+                )
+            }
+        }
+        var size by remember(brandVersion) { mutableFloatStateOf(kit.logoSize) }
+        Text("Logo size: ${(size * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = size, onValueChange = { size = it }, valueRange = 0.1f..0.4f,
+            onValueChangeFinished = { viewModel.saveBrandKit(kit.copy(logoSize = size)) },
+        )
+        var opacity by remember(brandVersion) { mutableFloatStateOf(kit.logoOpacity) }
+        Text("Logo opacity: ${(opacity * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = opacity, onValueChange = { opacity = it }, valueRange = 0.3f..1f,
+            onValueChangeFinished = { viewModel.saveBrandKit(kit.copy(logoOpacity = opacity)) },
+        )
+        var name by remember(brandVersion) { mutableStateOf(kit.businessName) }
+        OutlinedTextField(
+            value = name, onValueChange = { name = it }, singleLine = true,
+            label = { Text("Business name / handle, e.g. Soni Bakes · @sonibakes") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (name != kit.businessName) {
+            Button(onClick = { viewModel.saveBrandKit(kit.copy(businessName = name.trim())) }) { Text("Save name") }
+        }
+        Text("Colour filter", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ColorFilterPreset.entries.forEach { f ->
+                FilterChip(
+                    selected = kit.filter == f,
+                    onClick = { viewModel.saveBrandKit(kit.copy(filter = f)) },
+                    label = { Text(f.label) },
+                )
+            }
+        }
+        Text("Preview", style = MaterialTheme.typography.labelMedium)
+        val preview = kit.copy(businessName = name.trim(), logoSize = size, logoOpacity = opacity)
+        EditPreview(sample, brandVersion, preview) { preview.apply(it) }
+        if (kit.isEmpty && name.isBlank()) {
+            Text(
+                "Choose a logo, type your business name or pick a filter to see it here.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        SwitchRow("Also brand crops, filters and white-background copies", kit.applyToEdits) {
+            viewModel.saveBrandKit(kit.copy(applyToEdits = it))
+        }
+    }
+}
