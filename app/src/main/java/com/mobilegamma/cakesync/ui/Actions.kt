@@ -27,9 +27,11 @@ enum class EditAction(
     val title: String,
     val blurb: String,
     val brush: Brush? = null,
+    /** Photos needed before Continue is enabled. */
+    val minPhotos: Int = 1,
 ) {
     REEL("Reel", "🎬", "Reel", "Video with music and transitions", CakeBrush.reel),
-    COLLAGE("Collage", "🧩", "Collage", "2 to 9 photos in one post", CakeBrush.collage),
+    COLLAGE("Collage", "🧩", "Collage", "2 to 9 photos in one post", CakeBrush.collage, minPhotos = 2),
     FILTER("Filter", "🎨", "Filter", "Warm, Pastel, Vintage and more", CakeBrush.filter),
     BRAND("Brand", "🏷", "Brand", "Your logo, name and price", CakeBrush.brand),
     WHITE_BG("White bg", "✂", "White background", "Clean product shots", CakeBrush.white),

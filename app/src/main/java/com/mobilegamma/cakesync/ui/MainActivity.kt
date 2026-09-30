@@ -262,9 +262,17 @@ private fun ContinueBar(action: EditAction, count: Int, onContinue: () -> Unit) 
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 3.dp, shadowElevation = 12.dp) {
         Button(
             onClick = onContinue,
-            enabled = count > 0,
+            enabled = count >= action.minPhotos,
             modifier = Modifier.navigationBarsPadding().padding(16.dp).fillMaxWidth().height(56.dp),
-        ) { Text(if (count == 0) "Select photos to continue" else "Continue: ${action.title} with $count") }
+        ) {
+            Text(
+                when {
+                    count == 0 -> "Select photos to continue"
+                    count < action.minPhotos -> "Select ${action.minPhotos - count} more"
+                    else -> "Continue: ${action.title} with $count"
+                }
+            )
+        }
     }
 }
 

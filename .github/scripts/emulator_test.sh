@@ -431,12 +431,24 @@ shot 05p-create-hub
 if tap_text "2 to 9 photos"; then
   sleep 2
   shot 05p2-pick-photos
-  labels=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -2 | sed -E 's/text="([^"]*)"/\1/' || true)
-  while IFS= read -r l; do
-    [ -n "$l" ] || continue
-    pos=$(find_text "$l"); set -- $pos
-    adb shell input tap "$1" "$(( $2 - 150 ))"; sleep 1
-  done <<< "$labels"
+  # Tap the first two tiles by position (captions can repeat, so not by text).
+  tiles=$(dump_ui | python3 -c '
+import re, sys
+seen = []
+for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
+    node = m.group(0)
+    t = re.search(r" text=\"([^\"]*)\"", node)
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
+    if t and b and re.search(r"[0-9]+%,", t.group(1)):
+        x1, y1, x2, y2 = map(int, b.groups())
+        c = ((x1 + x2) // 2, (y1 + y2) // 2 - 150)
+        if c not in seen: seen.append(c)
+for x, y in seen[:2]: print(x, y)
+')
+  while read -r x y; do
+    [ -n "$x" ] || continue
+    adb shell input tap "$x" "$y"; sleep 1
+  done <<< "$tiles"
   shot 05p3-picked
   if tap_text "Continue:"; then
     sleep 5
@@ -448,6 +460,8 @@ if tap_text "2 to 9 photos"; then
     if [ "${n:-0}" -ge 1 ]; then echo "PASS: collage saved"; collage_ok=0; else echo "FAIL: no collage saved"; fi
   fi
 fi
+tap_exact "Cancel" >/dev/null 2>&1 || true
+tap_exact "Done" >/dev/null 2>&1 || true
 
 echo "== Filter: select a photo, preview a filter, save"
 filter_ok=1
