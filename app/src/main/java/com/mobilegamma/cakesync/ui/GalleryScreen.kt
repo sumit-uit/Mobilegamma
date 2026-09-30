@@ -118,10 +118,7 @@ fun GalleryScreen(
                     skipDuplicates = state.settings?.skipDuplicates ?: true,
                     categoryName = categoryName,
                     selected = photo.mediaId in state.selected,
-                    onClick = {
-                        android.util.Log.d("CakeSync", "tile ${photo.mediaId} tapped, selecting=$selecting")
-                        if (selecting) viewModel.toggleSelected(photo) else viewing = photo.mediaId
-                    },
+                    onClick = { if (selecting) viewModel.toggleSelected(photo) else viewing = photo.mediaId },
                     onLongClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         viewModel.toggleSelected(photo)
