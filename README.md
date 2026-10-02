@@ -90,6 +90,13 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
   will look on your own photo.
 - **Daily automatic upload:** WorkManager runs at the hour you choose, optionally only
   on Wi-Fi, and uploads into `<Drive folder>/<date taken>/`. Each photo is uploaded once.
+  Drive sync is an explicit opt-in (Settings → Google Drive); local gallery sync works
+  without any account.
+- **Local gallery folder (no Drive needed):** every included cake is also saved on the
+  phone into `Pictures/<folder>/<date taken>/` (videos into `Movies/<folder>/<date taken>/`),
+  so there is one place for all cakes without connecting Google. The folder name is
+  user-choosable in Settings → Gallery folder (default `CakeSync`); each destination has
+  its own on/off switch. Copies never overwrite anything and are never re-scanned.
 - **Narrow Drive permission:** uses the `drive.file` scope, so the app can only see
   the files and folders it created, not the rest of your Drive.
 
@@ -129,11 +136,13 @@ No client ID is needed in the code: Google matches the package name and SHA-1.
 
 ## Using it
 1. **Allow** photo access (and notifications).
-2. **Connect** Google Drive.
-3. **Scan now.** Choose which folders to scan (Camera, WhatsApp Images and so on; nothing
+2. **Scan now** and tap **Save to gallery** — no Google account needed. Or turn on
+   **Google Drive** in Settings and **Connect** for cloud backup.
+3. Choose which folders to scan (Camera, WhatsApp Images and so on; nothing
    ticked means all of them) and how far back to look (7 days, 30 days, 1 year or all photos)
    in Settings. Photos already checked are never analysed again.
-4. Check the grid, then **Upload now**, or turn on **Upload automatically every day**.
+4. Check the grid, then **Upload now** (needs Drive on + connected), or turn on
+   **Sync automatically every day**.
 
 ## Project layout
 | Path | What it does |
@@ -143,11 +152,10 @@ No client ID is needed in the code: Google matches the package name and SHA-1.
 | `data/Settings.kt` | User preferences |
 | `drive/DriveAuth.kt` | Google authorization (`drive.file` scope) |
 | `drive/DriveClient.kt` | Minimal Drive REST client: folders and multipart upload |
-| `work/SyncWorker.kt` | Daily scan + upload job with notifications |
+| `work/SyncWorker.kt` | Daily scan + local organize + upload job with notifications |
 | `work/SyncScheduler.kt` | Schedules the daily job and "upload now" |
 | `ui/` | Jetpack Compose screen + ViewModel |
 
 ## Roadmap
 - LiteRT-LM chat command ("upload this week's cake photos again") using tool calling
-- Image-embedding search (MobileCLIP/SigLIP) for free-text matches like "birthday cake with candles"
-- Optional local move into a `Pictures/Cakes` folder via MediaStore
+- Image-embedding search (MobileCLIP/SigLIP) for free-text matches like "birthday cake with candles" and automatic theme grouping (baby shark, floral, 2-tier, rasmalai, …)

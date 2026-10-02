@@ -37,6 +37,8 @@ fun HomeScreen(
     onConnectDrive: () -> Unit,
     onScan: () -> Unit,
     onSync: () -> Unit,
+    onOrganize: () -> Unit,
+    onToggleGallery: () -> Unit,
     onViewResults: () -> Unit,
     onSeeAll: () -> Unit,
     onOpenPhoto: (Photo) -> Unit,
@@ -52,6 +54,8 @@ fun HomeScreen(
         Hero(state, businessName)
 
         val videosWanted = state.settings?.includeVideos == true
+        val localOn = state.settings?.localOrganizeEnabled == true
+        val driveOn = state.settings?.driveUploadEnabled == true
         val setupDone = state.hasPhotoPermission && (!videosWanted || state.hasVideoPermission) && state.driveConnected
         if (!setupDone) {
             Section("🧁", "Get set up") {
@@ -62,7 +66,13 @@ fun HomeScreen(
                         TextButton(onClick = onOpenSettings) { Text("No prompt? Open Android settings") }
                     }
                 }
-                SetupRow("Google Drive", "Where your photos are uploaded", state.driveConnected, "Connect", onConnectDrive)
+                if (localOn) {
+                    val folder = state.settings?.localFolderName ?: "CakeSync"
+                    SetupRow("Gallery folder", "Cakes saved on this phone · Pictures/$folder", true, "", {})
+                } else {
+                    SetupRow("Gallery folder", "Keep cakes in one place, no account needed", false, "Turn on", onToggleGallery)
+                }
+                SetupRow("Google Drive", if (driveOn) "Where your photos are uploaded" else "Optional cloud backup (off)", state.driveConnected, "Connect", onConnectDrive)
             }
         }
 
@@ -75,10 +85,18 @@ fun HomeScreen(
             ) { Text(if (state.scanProgress != null) "Scanning…" else "🔍  Scan now") }
             FilledTonalButton(
                 onClick = onSync,
-                enabled = state.hasPhotoPermission && state.driveConnected && !state.syncRunning,
+                enabled = state.hasPhotoPermission && driveOn && state.driveConnected && !state.syncRunning,
                 modifier = Modifier.weight(1f).height(56.dp),
                 shape = MaterialTheme.shapes.medium,
             ) { Text(if (state.syncRunning) "Uploading…" else "☁️  Upload now (${state.pendingCount})") }
+        }
+        if (localOn) {
+            OutlinedButton(
+                onClick = onOrganize,
+                enabled = state.hasPhotoPermission && !state.syncRunning,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.medium,
+            ) { Text("🖼  Save to gallery (${state.pendingLocalCount})") }
         }
         state.scanProgress?.let { (done, total) ->
             if (total > 0) LinearProgressIndicator(progress = { done / total.toFloat() }, Modifier.fillMaxWidth().clip(CircleShape))

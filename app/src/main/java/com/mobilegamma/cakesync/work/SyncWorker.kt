@@ -31,8 +31,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Daily job: scan new photos and videos, then upload every match that is not yet in Drive
- * into `<root folder>/<yyyy-MM-dd>/` (the day it was taken).
+ * Daily job: scan new photos and videos, save a local gallery copy
+ * (`Pictures/Movies/<folder>/<yyyy-MM-dd>/`, no account needed), then upload
+ * every match that is not yet in Drive into `<category>/<yyyy-MM-dd>/`.
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -46,6 +47,24 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
         PhotoScanner(applicationContext).scanNew()
 
+        // Local gallery copies first: works offline and without Drive.
+        var organized = 0
+        if (settings.localOrganizeEnabled) {
+            val pendingLocal = store.pendingLocalOrganize(
+                settings.requireApproval, settings.excludePeople, settings.skipDuplicates
+            )
+            if (pendingLocal.isNotEmpty()) {
+                organized = com.mobilegamma.cakesync.data.LocalLibrary(applicationContext)
+                    .organize(pendingLocal, settings.localFolderName).organized
+            }
+        }
+
+        // Google Drive is an explicit opt-in; skip it entirely when switched off.
+        if (!settings.driveUploadEnabled) {
+            val msg = if (organized > 0) "Saved $organized cake(s) to the gallery" else "Gallery sync done — nothing new"
+            return finish(msg, success = true, notify = organized > 0)
+        }
+
         val pending = store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates)
         if (pending.isEmpty()) return finish("Nothing new to upload", success = true, notify = false)
 
@@ -53,7 +72,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             is DriveAuth.Outcome.Token -> auth.accessToken
             else -> {
                 settings.driveConnected = false
-                return finish("Reconnect Google Drive to upload ${pending.size} file(s)", success = false)
+                // Local work still succeeded; don't report failure to Drive-less users.
+                val msg = if (organized > 0) {
+                    "Saved $organized cake(s) to the gallery · reconnect Drive to upload ${pending.size} file(s)"
+                } else {
+                    "Reconnect Google Drive to upload ${pending.size} file(s)"
+                }
+                return finish(msg, success = organized > 0)
             }
         }
 
@@ -110,7 +135,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             return retryWith("Network error, will retry ($uploaded uploaded)")
         }
 
-        return finish("Uploaded $uploaded file(s) to Drive", success = true)
+        val localBit = if (organized > 0) " · saved $organized to the gallery" else ""
+        return finish("Uploaded $uploaded file(s) to Drive$localBit", success = true)
     }
 
     private suspend fun ensureRootFolder(drive: DriveClient, category: Category): String {

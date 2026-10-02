@@ -33,10 +33,12 @@ object SyncScheduler {
         wm.enqueueUniquePeriodicWork(DAILY, ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, request)
     }
 
+    /**
+     * "Upload now" / "Save locally" button. No network constraint: the worker always
+     * does the local gallery copy first and skips Drive gracefully when offline.
+     */
     fun syncNow(context: Context) {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .build()
+        val request = OneTimeWorkRequestBuilder<SyncWorker>().build()
         WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP, request)
     }
 

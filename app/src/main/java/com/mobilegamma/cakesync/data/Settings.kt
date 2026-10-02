@@ -63,6 +63,31 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_VIDEOS, true)
         set(value) = prefs.edit { putBoolean(KEY_VIDEOS, value) }
 
+    /** Save a copy of every included cake into the gallery (no Drive needed). */
+    var localOrganizeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LOCAL_ENABLED, true)
+        set(value) = prefs.edit { putBoolean(KEY_LOCAL_ENABLED, value) }
+
+    /**
+     * Upload matches to Google Drive. Off by default; connecting Drive turns it on.
+     * Upgrades with an existing Drive connection keep working (enabled inferred).
+     */
+    var driveUploadEnabled: Boolean
+        get() = if (prefs.contains(KEY_DRIVE_ENABLED)) prefs.getBoolean(KEY_DRIVE_ENABLED, false)
+            else prefs.getBoolean(KEY_CONNECTED, false)
+        set(value) = prefs.edit { putBoolean(KEY_DRIVE_ENABLED, value) }
+
+    /**
+     * Gallery folder name for local copies: photos go to
+     * `Pictures/<name>/<yyyy-MM-dd>/`, videos to `Movies/<name>/<yyyy-MM-dd>/`.
+     * Sanitized on read so a bad value can never escape into MediaStore.
+     * Default is app-specific ("CakeSync") to avoid colliding with a folder
+     * the user already has; changing it leaves old copies where they are.
+     */
+    var localFolderName: String
+        get() = sanitizeFolderName(prefs.getString(KEY_LOCAL_FOLDER, DEFAULT_LOCAL_FOLDER))
+        set(value) = prefs.edit { putString(KEY_LOCAL_FOLDER, sanitizeFolderName(value)) }
+
     /** How far back scans look, in days; 0 = all photos. */
     var scanDays: Int
         get() = prefs.getInt(KEY_SCAN_DAYS, 7)
@@ -109,7 +134,14 @@ class Settings(context: Context) {
     fun labelSet(): Set<String> =
         targetLabels.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
 
+    /** MediaStore RELATIVE_PATH prefixes the scanner must never pick up (our own output). */
+    fun localOutputPrefixes(): List<String> {
+        val name = localFolderName
+        return listOf("Pictures/$name/", "Movies/$name/")
+    }
+
     private companion object {
+        const val DEFAULT_LOCAL_FOLDER = "CakeSync"
         const val KEY_LABELS = "target_labels"
         const val KEY_THRESHOLD = "threshold"
         const val KEY_FOLDER = "drive_folder_name"
@@ -121,11 +153,25 @@ class Settings(context: Context) {
         const val KEY_SCAN_DAYS = "scan_days"
         const val KEY_EXCLUDE_PEOPLE = "exclude_people"
         const val KEY_VIDEOS = "include_videos"
+        const val KEY_LOCAL_ENABLED = "local_organize_enabled"
+        const val KEY_DRIVE_ENABLED = "drive_upload_enabled"
+        const val KEY_LOCAL_FOLDER = "local_folder_name"
         const val KEY_SKIP_DUPLICATES = "skip_duplicates"
         const val KEY_FOLDERS = "scan_folders"
         const val KEY_ROOT_FOLDER_ID = "drive_root_folder_id"
         const val KEY_CONNECTED = "drive_connected"
         const val KEY_DRIVE_ACCOUNT = "drive_account"
         const val KEY_LAST_MSG = "last_sync_message"
+
+        /** Keep the folder to a single safe path segment; fall back to the default. */
+        fun sanitizeFolderName(raw: String?): String {
+            val cleaned = raw.orEmpty().trim()
+                .replace(Regex("[/\\\\%_]+"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim().take(50)
+            if (cleaned.isEmpty()) return DEFAULT_LOCAL_FOLDER
+            if (cleaned.startsWith(".")) return DEFAULT_LOCAL_FOLDER
+            return cleaned
+        }
     }
 }

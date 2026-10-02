@@ -63,6 +63,9 @@ import kotlinx.coroutines.withContext
 
 data class SettingsState(
     val categories: List<Category>,
+    val driveUploadEnabled: Boolean,
+    val localFolderName: String,
+    val localOrganizeEnabled: Boolean,
     val uploadHour: Int,
     val wifiOnly: Boolean,
     val dailySyncEnabled: Boolean,
@@ -86,6 +89,7 @@ data class UiState(
     val tab: GridTab = GridTab.MATCHES,
     val photos: List<Photo> = emptyList(),
     val pendingCount: Int = 0,
+    val pendingLocalCount: Int = 0,
     val scanProgress: Pair<Int, Int>? = null,
     val syncRunning: Boolean = false,
     val message: String? = null,
@@ -171,11 +175,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     GridTab.ALL -> store.all()
                     GridTab.CREATED -> created
                 }.filter { tab == GridTab.CREATED || filter == null || it.category == filter }
-                val pending = store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
+                val pending = if (settings.driveUploadEnabled) {
+                    store.pendingUploads(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
+                } else 0
+                val pendingLocal = if (settings.localOrganizeEnabled) {
+                    store.pendingLocalOrganize(settings.requireApproval, settings.excludePeople, settings.skipDuplicates).size
+                } else 0
                 val newDesigns = runCatching { designGroups(matches, menuStore.load()).size }.getOrDefault(0)
-                Loaded(photos, pending, matches.sortedByDescending { it.takenAtMillis }.take(12), matches.size, created.size, newDesigns)
+                Loaded(photos, pending, pendingLocal, matches.sortedByDescending { it.takenAtMillis }.take(12), matches.size, created.size, newDesigns)
             }
-            val (photos, pending) = loaded.photos to loaded.pending
+            val (photos, pending, pendingLocal) = Triple(loaded.photos, loaded.pending, loaded.pendingLocal)
             _state.update {
                 it.copy(
                     hasPhotoPermission = SyncWorker.hasPhotoPermission(getApplication()),
@@ -184,6 +193,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     driveAccount = settings.driveAccount,
                     photos = photos,
                     pendingCount = pending,
+                    pendingLocalCount = pendingLocal,
                     recent = loaded.recent,
                     matchCount = loaded.matchCount,
                     createdCount = loaded.createdCount,
@@ -199,6 +209,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private data class Loaded(
         val photos: List<Photo>,
         val pending: Int,
+        val pendingLocal: Int,
         val recent: List<Photo>,
         val matchCount: Int,
         val createdCount: Int,
@@ -618,8 +629,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun syncNow() {
-        _state.update { it.copy(message = "Uploading in the background…") }
+        _state.update { it.copy(message = "Working in the background…") }
         SyncScheduler.syncNow(getApplication())
+    }
+
+    /** Immediate foreground copy into the gallery (no worker, works offline). */
+    fun organizeNow() {
+        if (_state.value.syncRunning) return
+        if (!settings.localOrganizeEnabled) {
+            _state.update { it.copy(message = "Gallery sync is off — turn it on in Settings.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(message = "Saving cakes to the gallery…") }
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val pending = store.pendingLocalOrganize(
+                        settings.requireApproval, settings.excludePeople, settings.skipDuplicates
+                    )
+                    com.mobilegamma.cakesync.data.LocalLibrary(getApplication())
+                        .organize(pending, settings.localFolderName)
+                }
+            }
+            _state.update {
+                it.copy(
+                    message = result.fold(
+                        { r ->
+                            settings.lastSyncMessage = java.text.SimpleDateFormat(
+                                "MMM d, HH:mm", java.util.Locale.getDefault()
+                            ).format(java.util.Date()) + " · Saved ${r.organized} cake(s) to the gallery"
+                            settings.lastSyncMessage
+                        },
+                        { e -> "Could not save locally: ${e.message}" },
+                    ),
+                )
+            }
+            refresh()
+        }
     }
 
     /** Opens a creation in the phone's photo/video viewer. */
@@ -999,7 +1045,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 is DriveAuth.Outcome.NeedsConsent -> _state.update { it.copy(consentIntent = result.pendingIntent) }
                 is DriveAuth.Outcome.Token -> {
                     settings.driveConnected = true
-                    _state.update { it.copy(driveConnected = true, message = "Google Drive connected") }
+                    // Explicit user intent: connecting turns Drive sync on.
+                    settings.driveUploadEnabled = true
+                    SyncScheduler.apply(getApplication())
+                    _state.update {
+                        it.copy(
+                            driveConnected = true,
+                            message = "Google Drive connected — sync is on",
+                            settings = readSettings(),
+                        )
+                    }
+                    refresh()
                 }
             }
         }.onFailure { e ->
@@ -1018,12 +1074,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         _state.update { it.copy(settings = after) }
         if (before.requireApproval != after.requireApproval || before.excludePeople != after.excludePeople ||
-            before.skipDuplicates != after.skipDuplicates
+            before.skipDuplicates != after.skipDuplicates ||
+            before.driveUploadEnabled != after.driveUploadEnabled ||
+            before.localOrganizeEnabled != after.localOrganizeEnabled
         ) refresh()
     }
 
     private fun readSettings() = SettingsState(
         categories = categories.all(),
+        driveUploadEnabled = settings.driveUploadEnabled,
+        localFolderName = settings.localFolderName,
+        localOrganizeEnabled = settings.localOrganizeEnabled,
         uploadHour = settings.uploadHour,
         wifiOnly = settings.wifiOnly,
         dailySyncEnabled = settings.dailySyncEnabled,

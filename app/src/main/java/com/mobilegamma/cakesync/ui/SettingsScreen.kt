@@ -115,6 +115,9 @@ fun SettingsScreen(
         }
 
         Section("☁️", "Google Drive") {
+            SwitchRow("Upload to Google Drive", s.driveUploadEnabled) {
+                viewModel.updateSettings { driveUploadEnabled = it }
+            }
             val pickAccount = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)?.let(viewModel::switchDriveAccount)
             }
@@ -196,6 +199,24 @@ fun SettingsScreen(
             }
         }
 
+        Section("🖼", "Gallery folder") {
+            SwitchRow("Save cakes to the gallery (no Drive needed)", s.localOrganizeEnabled) {
+                viewModel.updateSettings { localOrganizeEnabled = it }
+            }
+            // User-choosable; default "CakeSync" avoids colliding with a folder the
+            // user already has. Copies are additive — renaming leaves old ones behind.
+            var name by remember(s.localFolderName) { mutableStateOf(s.localFolderName) }
+            OutlinedTextField(
+                value = name, onValueChange = { name = it }, singleLine = true,
+                label = { Text("Folder name (in Pictures / Movies)") },
+                supportingText = { Text("Photos → Pictures/$name/<date>/ · Videos → Movies/$name/<date>/") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (name != s.localFolderName) {
+                Button(onClick = { viewModel.updateSettings { localFolderName = name } }) { Text("Save") }
+            }
+        }
+
         Section("📦", "Orders") {
             Text(orderSetupSummary(state.orderSettings), style = MaterialTheme.typography.bodyMedium)
             Text(
@@ -209,12 +230,12 @@ fun SettingsScreen(
             }
         }
 
-        Section("⏰", "Daily upload") {
-            SwitchRow("Upload automatically every day", s.dailySyncEnabled) {
+        Section("⏰", "Daily sync") {
+            SwitchRow("Sync automatically every day", s.dailySyncEnabled) {
                 viewModel.updateSettings { dailySyncEnabled = it }
             }
             var hour by remember(s.uploadHour) { mutableFloatStateOf(s.uploadHour.toFloat()) }
-            Text("Daily upload time: %02d:00".format(hour.toInt()))
+            Text("Daily sync time: %02d:00".format(hour.toInt()))
             Slider(
                 value = hour,
                 onValueChange = { hour = it },
@@ -223,7 +244,7 @@ fun SettingsScreen(
                 steps = 22,
             )
             SwitchRow("Wi-Fi only", s.wifiOnly) { viewModel.updateSettings { wifiOnly = it } }
-            SwitchRow("Only upload photos I've approved", s.requireApproval) {
+            SwitchRow("Only sync photos I've approved", s.requireApproval) {
                 viewModel.updateSettings { requireApproval = it }
             }
         }

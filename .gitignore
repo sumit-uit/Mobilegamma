@@ -11,3 +11,7 @@ captures/
 *.keystore
 *.jks
 cakesync.jks
+# Local emulator-test artifacts (were CI workspaces)
+test-images/
+test-videos/
+emulator-output/

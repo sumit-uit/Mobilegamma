@@ -194,6 +194,19 @@ echo "Result: $result"
 echo "$result" > "$OUT/result.txt"
 check_no_crash
 
+echo "== Save to gallery (local folder, no Drive needed)"
+tap_text "Save to gallery" || true
+wait_for_text "Saved" 90
+sleep 2
+shot 02b-after-organize
+gallery=$(adb shell ls /sdcard/Pictures/CakeSync/ 2>/dev/null | tr -d '\r' | grep -c . || true)
+echo "Local gallery entries: $gallery"
+if [ "${gallery:-0}" -lt 1 ]; then
+  echo "FAIL: no local gallery copies under Pictures/CakeSync/"
+  exit 1
+fi
+echo "PASS: cakes saved to the gallery"
+
 echo "== What ML Kit saw in each photo (from the app's database)"
 adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos.db" || true
 adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos.db-wal" 2>/dev/null || true
@@ -373,7 +386,7 @@ if select_first_photo; then
     tap_text "Other apps" || true
     sleep 4
     shot 05k-share-sheet
-    if dump_ui | grep -qE 'Share [0-9]+ item|Share with|Nearby|Copy'; then echo "PASS: share sheet opened"; share_ok=0
+    if dump_ui | grep -qE 'Share [0-9]+ item|Sharing image|Share with|Nearby|Copy'; then echo "PASS: share sheet opened"; share_ok=0
     else echo "FAIL: share sheet not shown"; fi
     adb shell input keyevent KEYCODE_BACK; sleep 2
     adb shell am start -n "$PKG/.ui.MainActivity" >/dev/null; sleep 3

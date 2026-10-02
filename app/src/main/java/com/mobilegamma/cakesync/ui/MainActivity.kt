@@ -244,6 +244,8 @@ private fun MainScaffold(
                     onConnectDrive = viewModel::connectDrive,
                     onScan = viewModel::scanNow,
                     onSync = viewModel::syncNow,
+                    onOrganize = viewModel::organizeNow,
+                    onToggleGallery = { viewModel.updateSettings { localOrganizeEnabled = true } },
                     onViewResults = { go(Screen.GALLERY, GridTab.CREATED) },
                     onSeeAll = { go(Screen.GALLERY, GridTab.MATCHES) },
                     onOpenPhoto = { go(Screen.GALLERY, GridTab.MATCHES) },

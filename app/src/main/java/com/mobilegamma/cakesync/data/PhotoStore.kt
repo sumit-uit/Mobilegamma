@@ -34,9 +34,13 @@ data class Photo(
     val duplicate: Boolean = false,
     /** Id of the uploaded copy in Google Drive. */
     val driveFileId: String? = null,
+    /** Gallery copy made by the app; null = not organized locally yet. */
+    val localUri: Uri? = null,
+    val organizedAtMillis: Long? = null,
 ) {
     val hasPeople: Boolean get() = (faces ?: 0) > 0
     val uploaded: Boolean get() = uploadedAtMillis != null
+    val organized: Boolean get() = localUri != null
 
     /** Whether this photo will be uploaded; the user's choice always wins. */
     fun included(excludePeople: Boolean, skipDuplicates: Boolean = true): Boolean =
@@ -45,7 +49,7 @@ data class Photo(
 
 /** Local record of scanned photos, so each photo is classified and uploaded only once. */
 class PhotoStore private constructor(context: Context) :
-    SQLiteOpenHelper(context, "photos.db", null, 10) {
+    SQLiteOpenHelper(context, "photos.db", null, 11) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -70,7 +74,9 @@ class PhotoStore private constructor(context: Context) :
                 order_tag TEXT,
                 sharpness REAL,
                 dhash INTEGER,
-                duplicate INTEGER NOT NULL DEFAULT 0
+                duplicate INTEGER NOT NULL DEFAULT 0,
+                local_uri TEXT,
+                organized_at INTEGER
             )
             """.trimIndent()
         )
@@ -108,6 +114,11 @@ class PhotoStore private constructor(context: Context) :
                     "OR display_name LIKE '%\\_1080x1920.jpg' ESCAPE '\\' " +
                     "OR display_name LIKE 'CakeSync\\_reel\\_%' ESCAPE '\\'"
             )
+        }
+        if (oldVersion < 11) {
+            // Local gallery copies (Pictures/Movies/<folder>/<date>/).
+            db.execSQL("ALTER TABLE photos ADD COLUMN local_uri TEXT")
+            db.execSQL("ALTER TABLE photos ADD COLUMN organized_at INTEGER")
         }
     }
 
@@ -283,6 +294,15 @@ class PhotoStore private constructor(context: Context) :
         writableDatabase.update("photos", values, "media_id = ?", arrayOf(mediaId.toString()))
     }
 
+    /** A local gallery copy made by the app (Pictures/Movies/<folder>/<date>/). */
+    fun markOrganized(mediaId: Long, localUri: Uri) {
+        val values = ContentValues().apply {
+            put("local_uri", localUri.toString())
+            put("organized_at", System.currentTimeMillis())
+        }
+        writableDatabase.update("photos", values, "media_id = ?", arrayOf(mediaId.toString()))
+    }
+
     /** Photos the classifier matched or the user included, newest first. */
     fun matches(): List<Photo> =
         query("WHERE (override = 1) OR (override IS NULL AND is_match = 1) ORDER BY taken_at DESC")
@@ -302,6 +322,18 @@ class PhotoStore private constructor(context: Context) :
         return query("WHERE uploaded_at IS NULL AND $include ORDER BY taken_at ASC")
     }
 
+    /**
+     * Included photos that have no local gallery copy yet. Mirrors [pendingUploads]
+     * so the Drive and local destinations stay consistent.
+     */
+    fun pendingLocalOrganize(requireApproval: Boolean, excludePeople: Boolean, skipDuplicates: Boolean = true): List<Photo> {
+        var auto = if (excludePeople) "is_match = 1 AND faces = 0" else "is_match = 1"
+        if (skipDuplicates) auto += " AND duplicate = 0"
+        val include = if (requireApproval) "override = 1" else
+            "(override = 1 OR (override IS NULL AND $auto))"
+        return query("WHERE local_uri IS NULL AND $include ORDER BY taken_at ASC")
+    }
+
     private fun query(clause: String): List<Photo> =
         readableDatabase.rawQuery("SELECT * FROM photos $clause", null).use { c ->
             buildList { while (c.moveToNext()) add(c.toPhoto()) }
@@ -311,6 +343,8 @@ class PhotoStore private constructor(context: Context) :
         val overrideIdx = getColumnIndexOrThrow("override")
         val uploadedIdx = getColumnIndexOrThrow("uploaded_at")
         val facesIdx = getColumnIndexOrThrow("faces")
+        val localIdx = getColumnIndexOrThrow("local_uri")
+        val organizedIdx = getColumnIndexOrThrow("organized_at")
         return Photo(
             mediaId = getLong(getColumnIndexOrThrow("media_id")),
             uri = Uri.parse(getString(getColumnIndexOrThrow("uri"))),
@@ -330,6 +364,8 @@ class PhotoStore private constructor(context: Context) :
             sharpness = getColumnIndexOrThrow("sharpness").let { if (isNull(it)) null else getDouble(it) },
             duplicate = getInt(getColumnIndexOrThrow("duplicate")) == 1,
             driveFileId = getColumnIndexOrThrow("drive_file_id").let { if (isNull(it)) null else getString(it) },
+            localUri = if (isNull(localIdx)) null else runCatching { Uri.parse(getString(localIdx)) }.getOrNull(),
+            organizedAtMillis = if (isNull(organizedIdx)) null else getLong(organizedIdx),
         )
     }
 

@@ -292,6 +292,7 @@ class PhotoScanner(private val context: Context) {
     /** All folders that contain photos or videos, largest first. */
     suspend fun listFolders(): List<Folder> = withContext(Dispatchers.IO) {
         val counts = mutableMapOf<String, Int>()
+        val excluded = settings.localOutputPrefixes()
         val collections = if (settings.includeVideos) listOf(IMAGES, VIDEOS) else listOf(IMAGES)
         for (collection in collections) {
             context.contentResolver.query(collection, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)
@@ -300,6 +301,8 @@ class PhotoScanner(private val context: Context) {
                     while (c.moveToNext()) {
                         val path = c.getString(col) ?: continue
                         if (path == Creations.PHOTOS_PATH || path == Creations.VIDEOS_PATH) continue
+                        // Never offer our own gallery copies as a folder to scan.
+                        if (excluded.any { path.startsWith(it) }) continue
                         counts[path] = (counts[path] ?: 0) + 1
                     }
                 }
@@ -318,10 +321,15 @@ class PhotoScanner(private val context: Context) {
             add(MediaStore.MediaColumns.DATE_ADDED)
             if (isVideo) add(MediaStore.MediaColumns.DURATION)
         }.toTypedArray()
-        // The app's own creations (edits, reels) are never re-scanned as new photos.
+        // The app's own creations (edits, reels) and the local gallery folder are never
+        // re-scanned as new photos. Prefix match: copies live in dated subfolders.
+        // (Folder names are sanitized to exclude LIKE wildcards, ESCAPE is belt and braces.)
+        val skipped = (listOf(Creations.PHOTOS_PATH, Creations.VIDEOS_PATH) + settings.localOutputPrefixes()).distinct()
         var selection = "${MediaStore.MediaColumns.DATE_ADDED} > ? AND " +
-            "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR ${MediaStore.MediaColumns.RELATIVE_PATH} NOT IN (?, ?))"
-        val args = mutableListOf(sinceSec.toString(), Creations.PHOTOS_PATH, Creations.VIDEOS_PATH)
+            "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR " +
+            skipped.joinToString(" AND ") { "${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE ? ESCAPE '\\'" } + ")"
+        val args = mutableListOf(sinceSec.toString())
+        args += skipped.map { "$it%" }
         if (folders.isNotEmpty()) {
             selection += " AND ${MediaStore.MediaColumns.RELATIVE_PATH} IN (${folders.joinToString { "?" }})"
             args += folders
