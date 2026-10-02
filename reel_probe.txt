@@ -1,0 +1,8 @@
+codec_type=audio
+codec_type=video
+width=1920
+height=1080
+rotation=-90
+duration=26.540408
+brightness at 0.03s: YAVG=17.461
+brightness at 1.2s: YAVG=37.2465
