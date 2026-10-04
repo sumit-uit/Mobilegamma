@@ -5,6 +5,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Rapid pushes cancel stale runs instead of burning minutes on all of them.
+# (A cancelled release publish is harmless: the newer run republishes `latest`.)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -44,6 +50,7 @@ jobs:
         with:
           name: cakesync-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
 
       # Direct phone download: https://github.com/<repo>/releases/latest/download/CakeSync.apk
       - name: Publish APK as the latest release
@@ -68,6 +75,9 @@ jobs:
           exit 1
 
   emulator-test:
+    # The expensive device run (~20+ min): PRs, main pushes (which publish the
+    # release), or manual dispatch. Ordinary branch pushes get the fast build only.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -135,6 +145,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: emulator-screenshots
+          retention-days: 7
           path: |
             emulator-output/
             test-images/
