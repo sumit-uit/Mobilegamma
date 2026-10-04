@@ -100,17 +100,30 @@ Phone gallery ──► on-device ML Kit labelling ──► review grid ──�
 - **Narrow Drive permission:** uses the `drive.file` scope, so the app can only see
   the files and folders it created, not the rest of your Drive.
 
-## Google Drive setup (one time)
-Google sign-in only works after you register the app in Google Cloud:
+## Google Drive setup (publisher, one time — not end users)
+Bakers just tap **Connect** and pick their Gmail account. Everything below is done
+once by whoever publishes the app, in Google Cloud Console:
 
 1. Go to <https://console.cloud.google.com/> and create (or pick) a project.
 2. **APIs & Services → Library →** enable **Google Drive API**.
-3. **APIs & Services → OAuth consent screen:** set it up (External), and add your own
-   Google account as a **test user**.
+3. **APIs & Services → OAuth consent screen:** set it up (External). While it stays in
+   *Testing* mode only registered test accounts can connect; before launch, switch it
+   to *Production*.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID → Android**
    - Package name: `com.mobilegamma.cakesync`
    - SHA-1: `ED:E8:06:C4:11:EB:CE:F9:C4:55:9D:64:93:C0:A5:3F:1A:6F:71:AD` (the shared
      CakeSync signing key used by CI builds)
+
+### Before scaling past ~100 users
+`drive.file` is a sensitive scope: unverified apps are capped at ~100 Google
+accounts and show an "unverified app" warning. Complete Google's app verification
+(privacy policy, homepage, demo video) early — review takes days to weeks.
+
+### Play Store signing warning
+CI/release APKs use the shared keystore above, so Drive works. But if you publish
+via the Play Store with **Play App Signing**, Google re-signs with its own key
+(different SHA-1) and Drive breaks for store installs — register Play's SHA-1 as a
+second Android OAuth client in the same project.
 
 ### Signing key (GitHub secrets)
 CI signs every APK with one shared key, so the SHA-1 above stays the same. The key is

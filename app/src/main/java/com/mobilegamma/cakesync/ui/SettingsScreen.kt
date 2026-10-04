@@ -187,7 +187,9 @@ fun SettingsScreen(
                     dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
                 )
             }
-            if (!state.driveConnected) {
+            // Publisher diagnostics (package/SHA-1 for the Cloud OAuth client):
+            // only relevant when Drive sync is on but failing — never for gallery-only users.
+            if (s.driveUploadEnabled && !state.driveConnected) {
                 val identity = remember { appIdentity(context) }
                 SelectionContainer {
                     Text(
