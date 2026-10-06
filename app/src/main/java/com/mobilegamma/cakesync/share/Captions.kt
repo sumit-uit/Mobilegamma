@@ -41,7 +41,7 @@ object Captions {
             .trim()
     }
 
-    /** "cake, homebaker #pune" -> "#cake #homebaker #pune". */
+    /** "cake, homebaker #customcakes" -> "#cake #homebaker #customcakes". */
     fun normaliseHashtags(raw: String): String =
         raw.split(Regex("[\\s,]+")).map { it.trim().trimStart('#') }.filter { it.isNotEmpty() }
             .distinct().joinToString(" ") { "#$it" }

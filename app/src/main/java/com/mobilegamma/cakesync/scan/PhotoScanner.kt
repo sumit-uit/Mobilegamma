@@ -52,6 +52,14 @@ class PhotoScanner(private val context: Context) {
             if (duplicates > 0) append(" · $duplicates near-duplicate shot(s) set aside")
             if (failed > 0) append(" · $failed could not be read (see All scanned)")
         }
+
+        /** Baker-facing result line; diagnostics stay in logcat, not on screen. */
+        fun friendly(): String = buildString {
+            if (matched == 0) append("No new cakes found")
+            else append("Found $matched cake photo${if (matched == 1) "" else "s"} 🎉")
+            if (failed > 0) append(" · $failed couldn't be read (see All scanned)")
+            if (duplicates > 0) append(" · $duplicates near-duplicate${if (duplicates == 1) "" else "s"} set aside")
+        }
     }
 
     /** A photo folder on the device, e.g. "DCIM/Camera/", with its image count. */

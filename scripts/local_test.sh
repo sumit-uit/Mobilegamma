@@ -18,7 +18,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 AVD="${AVD:-CakeSync_Test}"
-PKG=com.mobilegamma.cakesync
+PKG=com.cakesync.app
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -39,7 +39,7 @@ APK=app/build/outputs/apk/debug/app-debug.apk
 [ -f "$APK" ] || fail "APK not produced at $APK"
 
 echo "== Test media"
-[ -d test-images ] || { python3 .github/scripts/fetch_test_images.py test-images; }
+[ -f test-images/cupcake_1.jpg ] || { python3 .github/scripts/fetch_test_images.py test-images; }
 python3 .github/scripts/make_composites.py test-images
 mkdir -p test-videos
 # NOTE: CI used video-src/cake.jpg, which is not in the repo; use a fetched cake photo.
@@ -53,24 +53,40 @@ ffmpeg -y -loglevel error -loop 1 -i "$other" -t 4 -r 10 \
 ls -l test-videos
 
 echo "== Emulator"
-devices=$(adb devices | awk 'NR>1 && $2=="device" {print $1}')
-count=$(echo "$devices" | grep -c . || true)
-if [ "$count" -eq 0 ]; then
-  emulator -list-avds | grep -qx "$AVD" || fail "no device attached and no AVD named '$AVD' (create it, or set AVD=<name>)"
-  echo "Starting emulator '$AVD' in the background (left running for next time)…"
-  nohup emulator -avd "$AVD" -no-snapshot -no-audio -no-boot-anim -camera-back none \
-    >/tmp/cakesync-emulator.log 2>&1 &
-  adb wait-for-device
-  echo "Waiting for boot…"
-  for _ in $(seq 1 60); do
-    [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
-    sleep 5
+# Never trust "any attached device": pick the one running our AVD by name and
+# pin it via ANDROID_SERIAL, so a stray emulator (or a real phone) can't hijack
+# the run. Booting is only attempted when nothing is attached at all.
+pick_device() {
+  adb devices | awk 'NR>1 && $2=="device" {print $1}' | while read -r d; do
+    name=$(ANDROID_SERIAL="$d" adb emu avd name 2>/dev/null | tr -d '\r' || true)
+    if [[ "$name" == *"$AVD"* ]]; then echo "$d"; return 0; fi
   done
-  [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] \
-    || fail "emulator did not boot (see /tmp/cakesync-emulator.log)"
-elif [ "$count" -gt 1 ] && [ -z "${ANDROID_SERIAL:-}" ]; then
-  fail "$count devices attached; set ANDROID_SERIAL to pick one"
+  return 1
+}
+chosen=$(pick_device || true)
+if [ -z "$chosen" ]; then
+  count=$(adb devices | awk 'NR>1 && $2=="device"' | grep -c . || true)
+  if [ "$count" -eq 0 ]; then
+    emulator -list-avds | grep -qx "$AVD" || fail "no device attached and no AVD named '$AVD' (create it, or set AVD=<name>)"
+    echo "Starting emulator '$AVD' in the background (left running for next time)…"
+    nohup emulator -avd "$AVD" -no-snapshot -no-audio -no-boot-anim -camera-back none \
+      >/tmp/cakesync-emulator.log 2>&1 &
+    adb wait-for-device
+    echo "Waiting for boot…"
+    for _ in $(seq 1 60); do
+      [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
+      sleep 5
+    done
+    [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] \
+      || fail "emulator did not boot (see /tmp/cakesync-emulator.log)"
+    chosen=$(pick_device || true)
+  else
+    fail "device(s) attached but none runs AVD '$AVD' — disconnect them or set AVD=<name> to use another emulator"
+  fi
 fi
+[ -n "$chosen" ] || fail "could not find our emulator"
+export ANDROID_SERIAL="$chosen"
+echo "Using device $ANDROID_SERIAL (AVD $AVD)"
 
 echo "== Fresh state (re-runs start clean: reinstall wipes photos.db)"
 adb uninstall "$PKG" >/dev/null 2>&1 || true

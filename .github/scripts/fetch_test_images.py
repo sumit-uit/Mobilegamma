@@ -10,6 +10,9 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else "test-images"
 SETS = {
     "cake": ["Category:Birthday cakes", "Category:Chocolate cakes", "Category:Cakes"],
     "other": ["Category:Labrador Retrievers", "Category:Beaches", "Category:Bicycles"],
+    # cupcakes: close-ups that ML Kit sees as Food (70%+) but often not Cake;
+    # the Cupcakes category below is built to catch exactly these
+    "cupcake": ["Category:Cupcakes"],
     # people with cake: should be matched as cake but skipped because of faces
     "people": ["Category:Birthday parties", "Category:People with cakes", "Category:Selfies"],
     # cakes decorated with photos/characters: faces here are on the cake and must NOT cause a skip

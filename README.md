@@ -110,7 +110,7 @@ once by whoever publishes the app, in Google Cloud Console:
    *Testing* mode only registered test accounts can connect; before launch, switch it
    to *Production*.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID → Android**
-   - Package name: `com.mobilegamma.cakesync`
+   - Package name: `com.cakesync.app`
    - SHA-1: `ED:E8:06:C4:11:EB:CE:F9:C4:55:9D:64:93:C0:A5:3F:1A:6F:71:AD` (the shared
      CakeSync signing key used by CI builds)
 
@@ -145,7 +145,7 @@ No client ID is needed in the code: Google matches the package name and SHA-1.
 - **Command line:** `./gradlew assembleDebug`, then install
   `app/build/outputs/apk/debug/app-debug.apk`.
 - **Phone download:** every push to `main` publishes
-  <https://github.com/sumit-uit/Mobilegamma/releases/latest/download/CakeSync.apk>.
+  <https://github.com/sumit-uit/cakesync/releases/latest/download/CakeSync.apk>.
 
 ## Using it
 1. **Allow** photo access (and notifications).

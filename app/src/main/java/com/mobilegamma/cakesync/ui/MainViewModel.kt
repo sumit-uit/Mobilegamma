@@ -612,7 +612,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     scanProgress = null,
                     message = result.fold(
-                        { r -> r.summary() },
+                        { r -> r.friendly() },
                         { e -> "Scan failed: ${e.message}" },
                     ),
                 )

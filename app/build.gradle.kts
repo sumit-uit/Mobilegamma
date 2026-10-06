@@ -5,11 +5,12 @@ plugins {
 }
 
 android {
+    // Code namespace keeps its original name; only applicationId (the Play package) is public.
     namespace = "com.mobilegamma.cakesync"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.mobilegamma.cakesync"
+        applicationId = "com.cakesync.app"
         minSdk = 29
         targetSdk = 35
         // CI sets GITHUB_RUN_NUMBER, so each published build installs as an update.

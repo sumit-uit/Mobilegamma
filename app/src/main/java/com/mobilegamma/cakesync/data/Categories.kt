@@ -19,7 +19,7 @@ data class Category(
     val threshold: Float,
     /** Top-level Drive folder for this category's uploads. */
     val driveFolder: String,
-    /** Hashtags added to captions, e.g. "#homebaker #cake #pune". */
+    /** Hashtags added to captions, e.g. "#homebaker #cake #customcakes". */
     val hashtags: String = "",
     /** Caption template; see [Captions] for the {placeholders}. Blank = default template. */
     val captionTemplate: String = "",

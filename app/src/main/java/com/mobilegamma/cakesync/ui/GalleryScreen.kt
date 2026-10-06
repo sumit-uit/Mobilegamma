@@ -278,8 +278,10 @@ fun PhotoTile(
             }
         }
         Text(
-            (photo.orderTag?.let { "📦 $it · " } ?: "") + (categoryName?.let { "$it · " } ?: "") +
-                (if (photo.hasPeople) "👤 ${photo.faces} · " else "") + photo.labels.ifEmpty { "no labels" },
+            // Creations already carry a human kind label ("🎬 Reel", "🧩 Collage");
+            // scanned photos get order/category/date instead of model scores.
+            if (created) photo.labels.ifBlank { shortDate(photo.takenAtMillis) }
+            else humanCaption(photo, categoryName),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -288,6 +290,17 @@ fun PhotoTile(
         )
     }
 }
+
+/** What a baker sees under a photo: order, category, date — never model scores. */
+private fun humanCaption(photo: Photo, categoryName: String?): String = buildList {
+    photo.orderTag?.let { add("📦 $it") }
+    categoryName?.let { add(it) }
+    if (photo.hasPeople) add("👤 ${photo.faces}")
+    add(shortDate(photo.takenAtMillis))
+}.joinToString(" · ")
+
+private fun shortDate(millis: Long): String =
+    java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault()).format(java.util.Date(millis))
 
 /** Full-screen view of one photo with its status and quick actions. */
 @Composable
@@ -303,6 +316,9 @@ private fun PhotoViewer(
     val excludePeople = state.settings?.excludePeople ?: true
     val skipDuplicates = state.settings?.skipDuplicates ?: true
     val included = photo.included(excludePeople, skipDuplicates)
+    val driveOn = state.settings?.driveUploadEnabled == true
+    val localOn = state.settings?.localOrganizeEnabled == true
+    val categoryName = state.settings?.categories?.firstOrNull { it.id == photo.category }?.name
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AsyncImage(
@@ -330,18 +346,30 @@ private fun PhotoViewer(
             ) {
                 val status = when {
                     photo.uploaded -> "✓ Already in your Drive"
-                    included -> "☁️ Will be uploaded"
-                    photo.override == null && photo.hasPeople -> "👤 Skipped: a person is in this photo"
-                    photo.override == null && photo.duplicate -> "≈ Skipped: a sharper copy is kept"
-                    else -> "✕ Excluded from uploads"
+                    !included && photo.override == null && photo.hasPeople -> "👤 Skipped: a person is in this photo"
+                    !included && photo.override == null && photo.duplicate -> "≈ Skipped: a sharper copy is kept"
+                    !included -> "✕ Excluded"
+                    photo.organized && driveOn && !photo.uploaded -> "⧉ Saved in your gallery · will upload to Drive"
+                    photo.organized -> "⧉ Saved in your gallery"
+                    localOn && driveOn -> "Will save to your gallery · will upload to Drive"
+                    localOn -> "Will save to your gallery"
+                    driveOn -> "Will upload to Drive"
+                    else -> "Included — turn on Gallery or Drive in Settings"
                 }
                 Text(status, color = Color.White, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    listOfNotNull(photo.orderTag?.let { "📦 $it" }, photo.labels.ifBlank { null }).joinToString(" · "),
+                    listOfNotNull(
+                        photo.orderTag?.let { "📦 $it" },
+                        categoryName,
+                        shortDate(photo.takenAtMillis),
+                    ).joinToString(" · "),
                     color = Color(0xCCFFFFFF),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     if (!photo.uploaded) {
                         Button(onClick = onToggle) { Text(if (included) "Exclude" else "Include") }
                     }
