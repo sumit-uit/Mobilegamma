@@ -39,6 +39,7 @@ fun HomeScreen(
     onSync: () -> Unit,
     onOrganize: () -> Unit,
     onToggleGallery: () -> Unit,
+    onToggleDrive: () -> Unit,
     onViewResults: () -> Unit,
     onSeeAll: () -> Unit,
     onOpenPhoto: (Photo) -> Unit,
@@ -74,6 +75,22 @@ fun HomeScreen(
                 }
                 SetupRow("Google Drive", if (driveOn) "Where your photos are uploaded" else "Optional cloud backup (off)", state.driveConnected, "Connect", onConnectDrive)
             }
+        } else if (localOn && !state.driveConnected) {
+            // Gallery-only bakers are done with setup; keep cloud backup discoverable
+            // without the red "!" nag.
+            Section("🧁", "You're all set") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Gallery sync is on", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Cakes save on this phone · add cloud backup anytime",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = onConnectDrive) { Text("Back up to Drive") }
+                }
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -83,12 +100,22 @@ fun HomeScreen(
                 modifier = Modifier.weight(1f).height(56.dp),
                 shape = MaterialTheme.shapes.medium,
             ) { Text(if (state.scanProgress != null) "Scanning…" else "🔍  Scan now") }
-            FilledTonalButton(
-                onClick = onSync,
-                enabled = state.hasPhotoPermission && driveOn && state.driveConnected && !state.syncRunning,
-                modifier = Modifier.weight(1f).height(56.dp),
-                shape = MaterialTheme.shapes.medium,
-            ) { Text(if (state.syncRunning) "Uploading…" else "☁️  Upload now (${state.pendingCount})") }
+            if (driveOn) {
+                FilledTonalButton(
+                    onClick = onSync,
+                    enabled = state.hasPhotoPermission && state.driveConnected && !state.syncRunning,
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    shape = MaterialTheme.shapes.medium,
+                ) { Text(if (state.syncRunning) "Uploading…" else "☁️  Upload now (${state.pendingCount})") }
+            } else {
+                // No dead disabled button: Drive is off, so offer turning it on.
+                OutlinedButton(
+                    onClick = onToggleDrive,
+                    enabled = state.hasPhotoPermission && !state.syncRunning,
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    shape = MaterialTheme.shapes.medium,
+                ) { Text("☁️  Turn on Drive") }
+            }
         }
         if (localOn) {
             OutlinedButton(
@@ -214,7 +241,7 @@ private fun Hero(state: UiState, businessName: String) {
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Stat(state.matchCount, "Cake photos", Modifier.weight(1f))
-                Stat(state.pendingCount, "To upload", Modifier.weight(1f))
+                Stat(state.pendingCount + state.pendingLocalCount, "Ready to sync", Modifier.weight(1f))
                 Stat(state.createdCount, "Created", Modifier.weight(1f))
             }
         }

@@ -52,6 +52,21 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
+      # Google Play upload: a release .aab signed with the shared key (Play's "upload key").
+      # Skipped without the keystore secret, because Play rejects an unsigned bundle.
+      - name: Build release bundle for Google Play
+        if: (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && hashFiles('app/cakesync.jks') != ''
+        env:
+          CAKESYNC_KEYSTORE_PASSWORD: ${{ secrets.CAKESYNC_KEYSTORE_PASSWORD }}
+        run: ./gradlew bundleRelease --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/build/outputs/bundle/release/*.aab') != ''
+        with:
+          name: cakesync-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+          retention-days: 30
+
       # Direct phone download: https://github.com/<repo>/releases/latest/download/CakeSync.apk
       - name: Publish APK as the latest release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

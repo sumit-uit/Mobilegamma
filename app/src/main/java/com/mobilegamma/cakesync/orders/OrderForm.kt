@@ -21,7 +21,7 @@ data class FormTable(val name: String, val table: PriceTable)
  * [OrderMessage.toOrder] reads back.
  */
 object OrderForm {
-    const val BASE_URL = "https://sumit-uit.github.io/Mobilegamma/order/"
+    const val BASE_URL = "https://sumit-uit.github.io/cakesync/order/"
 
     fun json(
         settings: OrderSettings,

@@ -488,7 +488,7 @@ private fun CategoryDialog(
                 )
                 OutlinedTextField(
                     value = hashtags, onValueChange = { hashtags = it },
-                    label = { Text("Hashtags for captions, e.g. homebaker cake pune") }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Hashtags for captions, e.g. homebaker custom cakes") }, modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = captionTemplate, onValueChange = { captionTemplate = it }, minLines = 3,
@@ -582,7 +582,7 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
         var website by remember(brandVersion) { mutableStateOf(kit.website) }
         OutlinedTextField(
             value = tagline, onValueChange = { tagline = it }, singleLine = true,
-            label = { Text("Tagline (optional), e.g. Custom cakes · Pune") }, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Tagline (optional), e.g. Custom cakes to order") }, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = instagram, onValueChange = { instagram = it }, singleLine = true,

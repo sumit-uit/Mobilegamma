@@ -3,7 +3,9 @@
 # drives the UI with adb/uiautomator, saves screenshots and checks the result.
 set -euo pipefail
 
-PKG=com.mobilegamma.cakesync
+PKG=com.cakesync.app
+# applicationId differs from the code namespace, so the activity needs its full class name.
+MAIN_ACTIVITY="$PKG/com.mobilegamma.cakesync.ui.MainActivity"
 OUT=emulator-output
 mkdir -p "$OUT"
 
@@ -40,10 +42,30 @@ for m in re.finditer(r"<node [^>]*>", xml):
 ' "$1"
 }
 
-# Taps the first node whose text is exactly $1.
+# Prints "x y" for the centre of the first node whose content-desc contains $1
+# (photo tiles expose no text, only their file name as the description).
+find_desc() {
+  dump_ui | python3 -c '
+import re, sys
+needle = sys.argv[1]
+xml = sys.stdin.read()
+for m in re.finditer(r"<node [^>]*>", xml):
+    node = m.group(0)
+    t = re.search(r" content-desc=\"([^\"]*)\"", node)
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
+    if t and b and needle in t.group(1):
+        x1, y1, x2, y2 = map(int, b.groups())
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        break
+' "$1"
+}
+
+# Taps the first node whose text is exactly $1 (retries: uiautomator dumps
+# flake under load and an empty dump must not fail the run on its own).
 tap_exact() {
-  local pos
-  pos=$(dump_ui | python3 -c '
+  local pos i
+  for i in 1 2 3; do
+    pos=$(dump_ui | python3 -c '
 import re, sys
 needle = sys.argv[1]
 for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
@@ -53,6 +75,9 @@ for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
     if t and b and t.group(1) == needle:
         x1, y1, x2, y2 = map(int, b.groups()); print((x1 + x2) // 2, (y1 + y2) // 2); break
 ' "$1")
+    [ -n "$pos" ] && break
+    sleep 2
+  done
   [ -n "$pos" ] && adb shell input tap $pos
 }
 
@@ -65,8 +90,12 @@ hide_keyboard() {
 }
 
 tap_text() {
-  local pos
-  pos=$(find_text "$1")
+  local pos i
+  for i in 1 2 3; do
+    pos=$(find_text "$1")
+    [ -n "$pos" ] && break
+    sleep 2
+  done
   if [ -z "$pos" ]; then echo "Could not find '$1' on screen"; shot "missing-$(echo "$1" | tr ' :' '__')"; return 1; fi
   echo "tap '$1' at $pos"
   adb shell input tap $pos
@@ -84,8 +113,9 @@ scroll_to_text() {
 
 # Taps a bottom-navigation item (Home, Gallery, Create, Settings): the lowest exact match.
 nav() {
-  local pos
-  pos=$(dump_ui | python3 -c '
+  local pos i
+  for i in 1 2 3; do
+    pos=$(dump_ui | python3 -c '
 import re, sys
 needle = sys.argv[1]; best = None
 for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
@@ -97,18 +127,82 @@ for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
         if best is None or y1 > best[1]: best = ((x1 + x2) // 2, (y1 + y2) // 2)
 if best: print(best[0], best[1])
 ' "$1")
+    [ -n "$pos" ] && break
+    sleep 2
+  done
   if [ -z "$pos" ]; then echo "nav '$1' not found"; return 1; fi
   echo "nav '$1' at $pos"; adb shell input tap $pos; sleep 2
 }
 
-# Long-presses the first photo tile (found by its "Label NN%," caption) to start a selection.
+# Polls until photo tiles (date captions) appear; grids load slowly on a
+# busy emulator and a single dump often catches a transition instead.
+# NOTE: keep the substitution and the test in separate statements — inline
+# `[ -n "$(... || true)" ]` misparses under macOS bash 3.2.
+wait_for_tiles() {
+  local timeout=${1:-30} waited=0 found=""
+  until [ -n "$found" ]; do
+    found=$(dump_ui | grep -oE 'text="([^"]* · )?[0-9]{1,2} [A-Z][a-z]{2}"' | head -1 || true)
+    [ -n "$found" ] && break
+    sleep 3; waited=$((waited + 3))
+    if [ "$waited" -ge "$timeout" ]; then echo "Timed out waiting for photo tiles"; return 1; fi
+  done
+}
+
+# Types text one character at a time ("%s" = space, as adb expects). A whole
+# word sent in one injection loses characters in Compose text fields on a busy
+# emulator ("Cupcakes" arrived as "Cu").
+type_text() {
+  local s=$1
+  while [ -n "$s" ]; do
+    if [ "${s:0:2}" = "%s" ]; then adb shell input text "%s"; s=${s:2}
+    else adb shell input text "${s:0:1}"; s=${s:1}; fi
+  done
+}
+
+# Long-presses the first photo tile to start a selection. Tiles are anchored by
+# their date caption ("5 Oct"); the image sits ~150px above its caption.
+# Prints "x y" for the middle of the first tile that is a photo: video tiles
+# carry a "▶ 0:04" badge, and edits, filters, collages and crops need photos.
+first_photo_pos() {
+  dump_ui | python3 -c '
+import re, sys
+caps, badges = [], []
+for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
+    node = m.group(0)
+    t = re.search(r" text=\"([^\"]*)\"", node)
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
+    if not (t and b):
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    if t.group(1).startswith("\u25b6"):
+        badges.append(((x1 + x2) // 2, (y1 + y2) // 2))
+    elif re.search(r"(^|\u00b7 )[0-9]{1,2} [A-Z][a-z]{2}$", t.group(1)):
+        caps.append(((x1 + x2) // 2, (y1 + y2) // 2))
+for x, y in caps:
+    if not any(abs(bx - x) < 200 and y - 400 < by < y for bx, by in badges):
+        print(x, y - 150)
+        break
+' || true
+}
+
 select_first_photo() {
-  local label pos
-  label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%,[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-  [ -n "$label" ] || { echo "no photo tile on screen"; return 1; }
-  pos=$(find_text "$label"); set -- $pos
-  adb shell input swipe "$1" "$(( $2 - 150 ))" "$1" "$(( $2 - 150 ))" 900
-  sleep 2
+  wait_for_tiles 30 || { echo "no photo tile on screen"; return 1; }
+  local pos
+  pos=$(first_photo_pos)
+  [ -n "$pos" ] || { echo "no photo tile on screen"; return 1; }
+  set -- $pos
+  # A long-press delivered late (busy emulator) lands as a tap and opens the photo
+  # viewer instead: check the selection bar appeared, otherwise back out and retry.
+  local try
+  for try in 1 2 3; do
+    adb shell input swipe "$1" "$2" "$1" "$2" 1200
+    sleep 2
+    if dump_ui | grep -q ' selected"'; then return 0; fi
+    adb shell input keyevent BACK
+    sleep 2
+  done
+  echo "could not start a selection"
+  return 1
 }
 
 wait_for_text() {
@@ -135,7 +229,7 @@ check_no_crash() {
 
 echo "== Install"
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb logcat -c
+adb logcat -c 2>/dev/null || true
 
 echo "== Load test photos"
 adb shell mkdir -p /sdcard/Pictures/CakeSyncTest
@@ -159,37 +253,65 @@ video_granted() {
 echo "== Updated from a photo-only version: photo access but no video access"
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_IMAGES
 if video_granted; then echo "note: granting photos also granted videos on this system image"; fi
-adb shell am start -W -n "$PKG/.ui.MainActivity"
+adb shell am start -W -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
 sleep 6
 shot 00-video-permission-prompt
-if video_granted; then
-  echo "PASS: video access granted after the app asked (Android grants it silently when photo access exists)"
-else
-  ui=$(dump_ui)
-  if echo "$ui" | grep -qiE 'Allow .*(video|photos and videos)|Video access'; then
-    echo "PASS: app is asking for video access"
-  else
-    echo "FAIL: video access neither granted nor requested"; echo "$ui" | grep -oE ' text="[^"]+"' | head -20; exit 1
+# Cold start on a fresh emulator can exceed `am start -W`'s own timeout, so the
+# app may still be on its splash screen: poll until video access is granted or
+# the app asks for it, instead of checking a single moment.
+prompt_ok=0
+for _ in $(seq 1 30); do
+  if video_granted; then
+    echo "PASS: video access granted after the app asked (Android grants it silently when photo access exists)"
+    prompt_ok=1
+    break
   fi
+  if dump_ui | grep -qiE 'Allow .*(video|photos and videos)|Video access'; then
+    echo "PASS: app is asking for video access"
+    prompt_ok=1
+    break
+  fi
+  sleep 3
+done
+if [ "$prompt_ok" -ne 1 ]; then
+  ui=$(dump_ui)
+  echo "FAIL: video access neither granted nor requested"
+  echo "$ui" | grep -oE ' text="[^"]+"' | head -20
+  exit 1
 fi
 echo "== First-run intro"
 shot 00b-intro-1
 if tap_text "Next"; then sleep 2; shot 00c-intro-2; tap_text "Next" || true; sleep 2; shot 00d-intro-3; fi
-tap_text "Get started" || tap_text "Skip" || true
+# Prefer Skip (straight Home); Get started enters the orders wizard, which needs
+# Later to exit. Either way we must land on Home, not in the wizard.
+tap_text "Skip" || tap_text "Get started" || true
+sleep 2
+tap_text "Later" || true
+sleep 1
 sleep 2
 adb shell pm grant "$PKG" android.permission.READ_MEDIA_VIDEO
 adb shell am force-stop "$PKG"
-adb shell am start -W -n "$PKG/.ui.MainActivity"
+adb shell am start -W -n "$MAIN_ACTIVITY"
 wait_for_text "Scan now" 60
 sleep 2
 shot 01-launch
 
 echo "== Scan"
 tap_text "Scan now"
-wait_for_text "Scanned" 180
+wait_for_text "Found" 60 || wait_for_text "No new cakes found" 120
 sleep 3
 shot 02-after-scan-matches
-result=$(dump_ui | grep -oE 'Scanned [0-9]+ new item\(s\), [0-9]+ match\(es\)' | head -1)
+result=$(dump_ui | grep -oE 'Found [0-9]+ cake photo|No new cakes found' | head -1 || true)
+if [ -z "$result" ]; then
+  echo "WARN: scan result missing from UI dump (flaky dump?) — retrying once"
+  sleep 5
+  result=$(dump_ui | grep -oE 'Found [0-9]+ cake photo|No new cakes found' | head -1 || true)
+fi
+if [ -z "$result" ]; then
+  echo "FAIL: no scan result on screen after two dumps"
+  dump_ui | grep -oE ' text="[^"]+"' | head -20 || true
+  exit 1
+fi
 echo "Result: $result"
 echo "$result" > "$OUT/result.txt"
 check_no_crash
@@ -232,18 +354,28 @@ tap_text "Matches" || true
 sleep 2
 shot 03c-gallery
 
-echo "== Photo viewer: tap a photo, exclude/include it"
-first_label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$first_label" ]; then
-  pos=$(find_text "$first_label"); set -- $pos
-  adb shell input tap "$1" "$(( $2 - 150 ))"
-  sleep 2
-  shot 04-photo-viewer
-  tap_exact "Exclude" || tap_exact "Include" || true
-  sleep 2
-  shot 04b-after-toggle
-  adb shell input keyevent KEYCODE_BACK
-  sleep 1
+echo "== Photo viewer: tap the first tile, exclude/include it"
+datecap=""
+if wait_for_tiles 30; then
+  datecap=$(dump_ui | grep -oE 'text="([^"]* · )?[0-9]{1,2} [A-Z][a-z]{2}"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
+fi
+if [ -n "$datecap" ]; then
+  pos=$(find_text "$datecap" || true)
+  if [ -z "$pos" ]; then
+    echo "WARN: tile vanished between dump and tap; skipping viewer check"
+  else
+    set -- $pos
+    adb shell input tap "$1" "$(( $2 - 150 ))"
+    sleep 2
+    shot 04-photo-viewer
+    tap_exact "Exclude" || tap_exact "Include" || true
+    sleep 2
+    shot 04b-after-toggle
+    adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  fi
+else
+  echo "WARN: no tiles for viewer check"
 fi
 
 echo "== Settings"
@@ -264,13 +396,17 @@ fi
 scroll_top() { for i in 1 2 3 4 5 6; do adb shell input swipe 540 700 540 1900 200; sleep 0.4; done; }
 scroll_top
 
-echo "== Categories: add a 'Beach' category through the UI"
+echo "== Categories: add a 'Cupcakes' category through the UI"
 category_ok=1
-if tap_text "+ Add category"; then
+# The Settings screen can still be composing after navigation on a slow host.
+if wait_for_text "+ Add category" 90 && tap_text "+ Add category"; then
   sleep 2
-  tap_text "Name, e.g. Cupcakes" && adb shell input text "Beach"
+  tap_text "Name, e.g. Cupcakes" && type_text "Cupcakes"
   sleep 1
-  tap_text "Labels to match" && adb shell input text "Beach"
+  # Cupcake close-ups reliably score Food 70%+ while often missing Cake, so
+  # "Cake, Food" at the default 60% catches them without stealing strong cakes
+  # (ties always lose to the earlier default category).
+  tap_text "Labels to match" && type_text "Cake,%sFood"
   sleep 1
   hide_keyboard
   shot 05c-new-category
@@ -281,12 +417,12 @@ if tap_text "+ Add category"; then
     if python3 - "$OUT/photos-cat.db" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect(sys.argv[1])
-rows = db.execute("SELECT display_name, category, is_match FROM photos WHERE display_name LIKE 'other_%'").fetchall()
-beach = [r for r in rows if r[1] not in (None, 'default') and r[2] == 1]
-print("other_* rows:", rows)
-sys.exit(0 if beach else 1)
+rows = db.execute("SELECT display_name, category, is_match FROM photos WHERE display_name LIKE 'cupcake_%'").fetchall()
+moved = [r for r in rows if r[1] not in (None, 'default') and r[2] == 1]
+print("cupcake_* rows:", rows)
+sys.exit(0 if moved else 1)
 PY
-    then echo "PASS: beach photos moved into the new category"; category_ok=0
+    then echo "PASS: cupcake photos moved into the new category"; category_ok=0
     else echo "FAIL: no photo was matched to the new category"; fi
   fi
   shot 05d-after-category
@@ -299,15 +435,15 @@ scroll_top
 echo "== Branding: business name, tagline, Instagram, font and colour in the brand kit"
 brand_ok=1
 if scroll_to_text "Business name"; then
-  tap_text "Business name" && adb shell input text "Soni%sBakes"
+  tap_text "Business name" && type_text "Soni%sBakes"
   sleep 1
   hide_keyboard
   tap_text "Save name" || true
   sleep 1
   shot 05i-brand-kit
   if scroll_to_text "Tagline"; then
-    tap_text "Tagline" && adb shell input text "Custom%scakes%sPune"; sleep 1; hide_keyboard
-    scroll_to_text "Instagram" && tap_text "Instagram" && adb shell input text "sonibakes"; sleep 1; hide_keyboard
+    tap_text "Tagline" && type_text "Custom%scakes%sto%sorder"; sleep 1; hide_keyboard
+    scroll_to_text "Instagram" && tap_text "Instagram" && type_text "sonibakes"; sleep 1; hide_keyboard
     scroll_to_text "Save text" && tap_text "Save text"
     sleep 1
   fi
@@ -326,18 +462,25 @@ if select_first_photo; then
   shot 05e-selection
   if tap_exact "Order"; then
     sleep 2
-    tap_text "Order name" && adb shell input text "Order%s1%s-%sTest"
+    tap_text "Order name" && type_text "Order%s1%s-%sTest"
     sleep 1
     hide_keyboard
     tap_text "Save" || true
     sleep 3
     shot 05f-after-order
-    adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos-order.db" || true
-    adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos-order.db-wal" 2>/dev/null || true
-    if python3 -c "
-import sqlite3, sys
-n=sqlite3.connect('$OUT/photos-order.db').execute(\"SELECT COUNT(*) FROM photos WHERE order_tag='Order 1 - Test'\").fetchone()[0]
-print('tagged photos:', n); sys.exit(0 if n>0 else 1)"; then echo "PASS: order tag saved"; order_ok=0
+    # The tag write is async; poll the DB instead of reading it once.
+    tagged=0
+    for i in $(seq 1 6); do
+      adb exec-out run-as "$PKG" cat databases/photos.db > "$OUT/photos-order.db" || true
+      adb exec-out run-as "$PKG" cat databases/photos.db-wal > "$OUT/photos-order.db-wal" 2>/dev/null || true
+      tagged=$(python3 -c "
+import sqlite3
+print(sqlite3.connect('$OUT/photos-order.db').execute(\"SELECT COUNT(*) FROM photos WHERE order_tag='Order 1 - Test'\").fetchone()[0])" || true)
+      [ "${tagged:-0}" -gt 0 ] && break
+      sleep 5
+    done
+    echo "tagged photos: $tagged"
+    if [ "${tagged:-0}" -gt 0 ]; then echo "PASS: order tag saved"; order_ok=0
     else echo "FAIL: order tag not saved"; fi
   fi
 fi
@@ -363,7 +506,7 @@ if select_first_photo; then
   tap_exact "All" || true
   if tap_exact "Brand"; then
     sleep 2
-    tap_text "Price or text" && adb shell input text "Rs%s1200"
+    tap_text "Price or text" && type_text "Rs%s1200"
     sleep 1
     hide_keyboard
     sleep 2
@@ -389,7 +532,7 @@ if select_first_photo; then
     if dump_ui | grep -qE 'Share [0-9]+ item|Sharing image|Share with|Nearby|Copy'; then echo "PASS: share sheet opened"; share_ok=0
     else echo "FAIL: share sheet not shown"; fi
     adb shell input keyevent KEYCODE_BACK; sleep 2
-    adb shell am start -n "$PKG/.ui.MainActivity" >/dev/null; sleep 3
+    adb shell am start -n "$MAIN_ACTIVITY" >/dev/null; sleep 3
   fi
 fi
 
@@ -402,7 +545,7 @@ if select_first_photo; then
     sleep 2
     shot 05l-reel-dialog
     tap_text "Make reel" || true
-    for i in $(seq 1 30); do
+    for i in $(seq 1 180); do   # up to 12 min: software encoding on an emulator is slow
       sleep 4
       reels=$(adb shell "content query --uri content://media/external/video/media --projection _display_name:duration:width:height" | grep "CakeSync_reel_" || true)
       [ -n "$reels" ] && break
@@ -456,22 +599,41 @@ shot 05p-create-hub
 if tap_text "2 to 9 photos"; then
   sleep 2
   shot 05p2-pick-photos
-  # Tap the first two tiles by position (captions can repeat, so not by text).
-  tiles=$(dump_ui | python3 -c '
+  # The picker opens slowly on a loaded host: poll for tiles (either caption
+  # style) instead of reading the screen once.
+  tiles=""
+  for i in $(seq 1 10); do
+    tiles=$(dump_ui | python3 -c '
 import re, sys
 seen = []
-for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
+ui = sys.stdin.read()
+badges = []
+for m in re.finditer(r"<node [^>]*>", ui):
+    t = re.search(r" text=\"▶[^\"]*\"", m.group(0))
+    b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", m.group(0))
+    if t and b:
+        x1, y1, x2, y2 = map(int, b.groups())
+        badges.append(((x1 + x2) // 2, (y1 + y2) // 2))
+for m in re.finditer(r"<node [^>]*>", ui):
     node = m.group(0)
     t = re.search(r" text=\"([^\"]*)\"", node)
     b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node)
-    if t and b and re.search(r"[0-9]+%,", t.group(1)):
-        x1, y1, x2, y2 = map(int, b.groups())
-        # A caption on its own: tap the photo above it. A merged tile node: tap its middle.
-        c = ((x1 + x2) // 2, y1 - 120) if y2 - y1 <= 120 else ((x1 + x2) // 2, (y1 + y2) // 2)
-        if c[1] < 700: continue             # not a tile (banner or chips)
-        if all(abs(c[0] - x) > 150 or abs(c[1] - y) > 150 for x, y in seen): seen.append(c)
+    if not (t and b):
+        continue
+    is_tile = re.search(r"[0-9]{1,2} [A-Z][a-z]{2}", t.group(1)) or re.search(r"[0-9]+%,", t.group(1))
+    if not is_tile:
+        continue
+    x1, y1, x2, y2 = map(int, b.groups())
+    # A caption on its own: tap the photo above it. A merged tile node: tap its middle.
+    c = ((x1 + x2) // 2, y1 - 120) if y2 - y1 <= 120 else ((x1 + x2) // 2, (y1 + y2) // 2)
+    if c[1] < 700: continue             # not a tile (banner or chips)
+    if any(abs(bx - c[0]) < 200 and abs(by - c[1]) < 250 for bx, by in badges): continue  # a video
+    if all(abs(c[0] - x) > 150 or abs(c[1] - y) > 150 for x, y in seen): seen.append(c)
 for x, y in seen[:2]: print(x, y)
-')
+' || true)
+    [ -n "$tiles" ] && break
+    sleep 3
+  done
   echo "tiles to tap: $tiles"
   while read -r x y; do
     [ -n "$x" ] || continue
@@ -499,7 +661,7 @@ if tap_text "Names, prices"; then
   shot 09-menu-prices
   if tap_text "Round cakes"; then
     sleep 2
-    tap_exact "\$" && { adb shell input text "60"; sleep 1; hide_keyboard; }
+    tap_exact "\$" && { type_text "60"; sleep 1; hide_keyboard; }
     shot 09a-menu-price-table
   fi
   scroll_to_text "Save prices" && tap_text "Save prices"
@@ -569,7 +731,7 @@ Eggless: yes
 Message on cake: Happy Birthday
 Date needed: tomorrow
 Pickup / delivery time: 5 pm'
-adb shell "am start -a android.intent.action.SEND -t text/plain -n $PKG/.ui.MainActivity --es android.intent.extra.TEXT '$msg'" >/dev/null
+adb shell "am start -a android.intent.action.SEND -t text/plain -n $MAIN_ACTIVITY --es android.intent.extra.TEXT '$msg'" >/dev/null
 sleep 4
 shot 10e-order-from-message
 tap_exact "Save" || true
@@ -632,12 +794,14 @@ studio_ok=1
 nav Gallery || true
 tap_text "Matches" || true
 sleep 2
-first_label=$(dump_ui | grep -oE 'text="[^"]*[0-9]+%[^"]*"' | head -1 | sed -E 's/text="([^"]*)"/\1/' || true)
-if [ -n "$first_label" ]; then
-  pos=$(find_text "$first_label"); set -- $pos
-  adb shell input tap "$1" "$(( $2 - 150 ))"
-  sleep 2
-  if tap_text "Edit"; then
+pos=""
+if wait_for_tiles 30; then pos=$(first_photo_pos); fi
+if [ -n "$pos" ]; then
+  if true; then
+    set -- $pos
+    adb shell input tap "$1" "$2"
+    sleep 2
+    if tap_text "Edit"; then
     sleep 5
     shot 08-studio-filters
     tap_exact "Warm" || true; sleep 2
@@ -659,6 +823,7 @@ if [ -n "$first_label" ]; then
     if [ "${n:-0}" -ge 1 ]; then echo "PASS: studio edit saved"; studio_ok=0; else echo "FAIL: no studio edit saved"; fi
     tap_text "Done" || adb shell input keyevent KEYCODE_BACK
     sleep 2
+  fi
   fi
 fi
 
@@ -732,8 +897,8 @@ check("zz_cake_face_topper.jpg", False, blocking=False)
 sys.exit(1 if failed else 0)
 PY
 
-matches=$(echo "$result" | grep -oE '[0-9]+ match' | grep -oE '[0-9]+' || echo 0)
-if [ "${matches:-0}" -lt 1 ]; then
+found=$(echo "$result" | grep -oE '[0-9]+' | head -1 || echo 0)
+if [ "${found:-0}" -lt 1 ]; then
   echo "FAIL: no cake photos detected"; exit 1
 fi
 if [ "$created_ok" -ne 0 ]; then

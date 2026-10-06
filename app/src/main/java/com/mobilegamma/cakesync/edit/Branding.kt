@@ -100,7 +100,7 @@ data class BrandKit(
     val labelFont: LabelFont = LabelFont.CLASSIC,
     val labelColor: Int = 0xFFFFFFFF.toInt(),
     val labelStyle: LabelStyle = LabelStyle.DARK,
-    /** Optional smaller line under the name, e.g. "Custom cakes · Pune". */
+    /** Optional smaller line under the name, e.g. "Custom cakes to order". */
     val tagline: String = "",
     /** Optional social lines under the name, e.g. "sweetcrumbs" → "@sweetcrumbs". */
     val instagram: String = "",
