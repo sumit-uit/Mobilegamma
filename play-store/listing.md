@@ -54,7 +54,7 @@ Character limits are Play's (title 30, short description 80, full description 40
 | Tags | Business, Photography, Productivity |
 | Contact email | **your support email** |
 | Website | **your site, or the GitHub Pages URL** |
-| Privacy policy URL | `https://sumit-uit.github.io/cakesync/privacy/` (after GitHub Pages is switched on) |
+| Privacy policy URL | `https://techaipro.github.io/cakesync/privacy/` (after GitHub Pages is switched on) |
 | Ads | No |
 | Target audience | 18+ (business tool) |
 
