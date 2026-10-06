@@ -54,7 +54,7 @@ Character limits are Play's (title 30, short description 80, full description 40
 | Tags | Business, Photography, Productivity |
 | Contact email | **your support email** |
 | Website | **your site, or the GitHub Pages URL** |
-| Privacy policy URL | `https://sumit-uit.github.io/cakesync/privacy/` (after GitHub Pages is switched on) |
+| Privacy policy URL | `https://techaipro.github.io/cakesync/privacy/` (after GitHub Pages is switched on) |
 | Ads | No |
 | Target audience | 18+ (business tool) |
 
@@ -63,7 +63,7 @@ Character limits are Play's (title 30, short description 80, full description 40
 | Asset | Requirement | Status |
 |---|---|---|
 | Phone screenshots | 2–8, each side 320–3840 px, long side at most 2× the short side | 8 ready in `screenshots/` (1080×2160) |
-| App icon | 512×512 PNG | **to do** — export from the launcher icon |
+| App icon | 512×512 PNG | ready: `icon-512.png` (rendered from the launcher icon) |
 | Feature graphic | 1024×500 PNG/JPG | **to do** |
 | Promo video | YouTube URL (optional) | Upload `videos/cakesync-demo/renders/video.mp4` to YouTube |
 

@@ -15,13 +15,12 @@ Key facts about this app:
 
 - [ ] Uninstall any old CakeSync build from your phone (the package name changed from
       `com.mobilegamma.cakesync`, so the new build installs as a separate app).
-- [ ] Commit and push `docs/privacy/index.html`, after replacing `[ADD YOUR CONTACT EMAIL]`.
-- [ ] Switch on GitHub Pages: repo → Settings → Pages → Source "Deploy from a branch" →
-      Branch `main`, folder `/docs` → Save.
-- [ ] Check both pages load:
-  - `https://sumit-uit.github.io/cakesync/privacy/`
-  - `https://sumit-uit.github.io/cakesync/order/` — the app's order-form link points here
-    and it currently returns 404, so this also fixes the order form for customers.
+- [x] Website is live from the public repo `TechAIPro/TechAIPro.github.io` (kept separate so
+      this code repo can go private without taking the pages down):
+  - `https://techaipro.github.io/cakesync/` — homepage
+  - `https://techaipro.github.io/cakesync/privacy/` — privacy policy
+  - `https://techaipro.github.io/cakesync/order/` — the order form the app links to
+- [ ] When `docs/order/index.html` or `docs/privacy/index.html` changes here, copy it to that repo.
 - [ ] Back up `cakesync.jks` and its password somewhere safe outside GitHub. If you lose the
       upload key you have to ask Google to reset it.
 
@@ -65,7 +64,7 @@ While it says Testing, only listed test users can sign in and their sign-in expi
       "Google Auth Platform").
 - [ ] Branding: app name `CakeSync`, support email, app home page, **privacy policy URL**
       (the Pages URL from Part 0), developer contact email.
-- [ ] Add `sumit-uit.github.io` under Authorized domains if the home page / policy live there.
+- [ ] Add `techaipro.github.io` under Authorized domains if the home page / policy live there.
       Google may ask you to prove you own the domain in Search Console.
 - [ ] Data access / Scopes: confirm the only scope is `.../auth/drive.file`.
 - [ ] Audience → **Publish app** → confirm. Status should change to **In production**.
