@@ -39,6 +39,7 @@ import com.google.android.gms.common.AccountPicker
 import com.mobilegamma.cakesync.data.Categories
 import com.mobilegamma.cakesync.data.Category
 import com.mobilegamma.cakesync.edit.Backdrops
+import com.mobilegamma.cakesync.edit.BrandKit
 import com.mobilegamma.cakesync.edit.ColorFilterPreset
 import com.mobilegamma.cakesync.edit.LABEL_COLOURS
 import com.mobilegamma.cakesync.edit.LabelFont
@@ -58,8 +59,18 @@ fun SettingsScreen(
 ) {
     val s = state.settings ?: return
     val context = LocalContext.current
+    // Nothing here applies until "Save changes": every switch, slider, chip and text
+    // field edits a draft, so a stray tap can't silently change how the app syncs or
+    // brands photos. Dialogs with their own Save/Cancel (categories, Drive folders)
+    // and one-off actions (connect Drive, pick a logo) still act immediately.
+    val saved = s.copy(categories = emptyList())
+    var draft by remember(saved) { mutableStateOf(saved) }
+    val savedKit = remember(state.brandVersion) { viewModel.brandKit() }
+    var kitDraft by remember(state.brandVersion) { mutableStateOf(savedKit) }
+    val dirty = draft != saved || kitDraft != savedKit
+    Column(Modifier.fillMaxSize()) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         ScreenTitle("Settings", "Make CakeSync work your way")
@@ -111,13 +122,11 @@ fun SettingsScreen(
 
         Section("🏷", "Brand kit") {
             val sample = state.recent.firstOrNull { !it.isVideo }?.uri
-            BrandKitSection(state.brandVersion, sample, viewModel)
+            BrandKitSection(state.brandVersion, sample, viewModel, kitDraft) { kitDraft = it }
         }
 
         Section("☁️", "Google Drive") {
-            SwitchRow("Upload to Google Drive", s.driveUploadEnabled) {
-                viewModel.updateSettings { driveUploadEnabled = it }
-            }
+            SwitchRow("Upload to Google Drive", draft.driveUploadEnabled) { draft = draft.copy(driveUploadEnabled = it) }
             val pickAccount = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)?.let(viewModel::switchDriveAccount)
             }
@@ -202,21 +211,16 @@ fun SettingsScreen(
         }
 
         Section("🖼", "Gallery folder") {
-            SwitchRow("Save cakes to the gallery (no Drive needed)", s.localOrganizeEnabled) {
-                viewModel.updateSettings { localOrganizeEnabled = it }
-            }
+            SwitchRow("Save cakes to the gallery (no Drive needed)", draft.localOrganizeEnabled) { draft = draft.copy(localOrganizeEnabled = it) }
             // User-choosable; default "CakeSync" avoids colliding with a folder the
             // user already has. Copies are additive — renaming leaves old ones behind.
-            var name by remember(s.localFolderName) { mutableStateOf(s.localFolderName) }
+            val name = draft.localFolderName
             OutlinedTextField(
-                value = name, onValueChange = { name = it }, singleLine = true,
+                value = name, onValueChange = { draft = draft.copy(localFolderName = it) }, singleLine = true,
                 label = { Text("Folder name (in Pictures / Movies)") },
                 supportingText = { Text("Photos → Pictures/$name/<date>/ · Videos → Movies/$name/<date>/") },
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (name != s.localFolderName) {
-                Button(onClick = { viewModel.updateSettings { localFolderName = name } }) { Text("Save") }
-            }
         }
 
         Section("📦", "Orders") {
@@ -233,58 +237,46 @@ fun SettingsScreen(
         }
 
         Section("⏰", "Daily sync") {
-            SwitchRow("Sync automatically every day", s.dailySyncEnabled) {
-                viewModel.updateSettings { dailySyncEnabled = it }
-            }
-            var hour by remember(s.uploadHour) { mutableFloatStateOf(s.uploadHour.toFloat()) }
-            Text("Daily sync time: %02d:00".format(hour.toInt()))
+            SwitchRow("Sync automatically every day", draft.dailySyncEnabled) { draft = draft.copy(dailySyncEnabled = it) }
+            Text("Daily sync time: %02d:00".format(draft.uploadHour))
             Slider(
-                value = hour,
-                onValueChange = { hour = it },
-                onValueChangeFinished = { viewModel.updateSettings { uploadHour = hour.toInt() } },
+                value = draft.uploadHour.toFloat(),
+                onValueChange = { draft = draft.copy(uploadHour = Math.round(it)) },
                 valueRange = 0f..23f,
                 steps = 22,
             )
-            SwitchRow("Wi-Fi only", s.wifiOnly) { viewModel.updateSettings { wifiOnly = it } }
-            SwitchRow("Only sync photos I've approved", s.requireApproval) {
-                viewModel.updateSettings { requireApproval = it }
-            }
+            SwitchRow("Wi-Fi only", draft.wifiOnly) { draft = draft.copy(wifiOnly = it) }
+            SwitchRow("Only sync photos I've approved", draft.requireApproval) { draft = draft.copy(requireApproval = it) }
         }
 
         Section("🔍", "Detection") {
-            SwitchRow("Skip photos with people (face detection)", s.excludePeople) {
-                viewModel.updateSettings { excludePeople = it }
-            }
-            SwitchRow("Keep only the best shot (skip near-duplicates)", s.skipDuplicates) {
-                viewModel.updateSettings { skipDuplicates = it }
-            }
-            SwitchRow("Include videos", s.includeVideos) {
-                viewModel.updateSettings { includeVideos = it }
-            }
+            SwitchRow("Skip photos with people (face detection)", draft.excludePeople) { draft = draft.copy(excludePeople = it) }
+            SwitchRow("Keep only the best shot (skip near-duplicates)", draft.skipDuplicates) { draft = draft.copy(skipDuplicates = it) }
+            SwitchRow("Include videos", draft.includeVideos) { draft = draft.copy(includeVideos = it) }
         }
 
         Section("📁", "Photos to scan") {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SCAN_WINDOWS.forEach { days ->
                     FilterChip(
-                        selected = s.scanDays == days,
-                        onClick = { viewModel.updateSettings { scanDays = days } },
+                        selected = draft.scanDays == days,
+                        onClick = { draft = draft.copy(scanDays = days) },
                         label = { Text(scanWindowLabel(days)) },
                     )
                 }
             }
             var showPicker by remember { mutableStateOf(false) }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Folders: ${folderSummary(s.scanFolders)}", Modifier.weight(1f))
+                Text("Folders: ${folderSummary(draft.scanFolders)}", Modifier.weight(1f))
                 TextButton(onClick = { showPicker = true; viewModel.loadFolders() }) { Text("Choose") }
             }
             if (showPicker) {
                 FolderPickerDialog(
                     folders = state.folders,
-                    selected = s.scanFolders,
+                    selected = draft.scanFolders,
                     onDismiss = { showPicker = false },
                     onSave = { chosen ->
-                        viewModel.updateSettings { scanFolders = chosen }
+                        draft = draft.copy(scanFolders = chosen)
                         showPicker = false
                     },
                 )
@@ -304,6 +296,53 @@ fun SettingsScreen(
             TextButton(onClick = onShowIntro) { Text("Show the intro again") }
         }
         Spacer(Modifier.height(24.dp))
+    }
+    if (dirty) {
+        UnsavedBar(
+            onDiscard = { draft = saved; kitDraft = savedKit },
+            onSave = {
+                val d = draft
+                if (d != saved) viewModel.updateSettings {
+                    driveUploadEnabled = d.driveUploadEnabled
+                    localOrganizeEnabled = d.localOrganizeEnabled
+                    localFolderName = d.localFolderName
+                    dailySyncEnabled = d.dailySyncEnabled
+                    uploadHour = d.uploadHour
+                    wifiOnly = d.wifiOnly
+                    requireApproval = d.requireApproval
+                    excludePeople = d.excludePeople
+                    skipDuplicates = d.skipDuplicates
+                    includeVideos = d.includeVideos
+                    scanDays = d.scanDays
+                    scanFolders = d.scanFolders
+                }
+                val k = kitDraft
+                if (k != savedKit) viewModel.saveBrandKit(
+                    k.copy(
+                        businessName = k.businessName.trim(), tagline = k.tagline.trim(),
+                        instagram = k.instagram.trim().removePrefix("@"),
+                        facebook = k.facebook.trim(), website = k.website.trim(),
+                    )
+                )
+            },
+        )
+    }
+    }
+}
+
+/** Sticky bar shown while the Settings draft differs from what is saved. */
+@Composable
+private fun UnsavedBar(onDiscard: () -> Unit, onSave: () -> Unit) {
+    Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Unsaved changes", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            TextButton(onClick = onDiscard) { Text("Discard") }
+            Button(onClick = onSave) { Text("Save changes") }
+        }
     }
 }
 
@@ -525,8 +564,14 @@ private fun CategoryDialog(
 }
 
 @Composable
-private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainViewModel) {
-    val kit = remember(brandVersion) { viewModel.brandKit() }
+private fun BrandKitSection(
+    brandVersion: Int,
+    sample: Uri?,
+    viewModel: MainViewModel,
+    /** The unsaved draft; edits go through [onChange] and apply on "Save changes". */
+    kit: BrandKit,
+    onChange: (BrandKit) -> Unit,
+) {
     val pickLogo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) viewModel.setBrandLogo(uri)
     }
@@ -550,69 +595,54 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
             LogoPosition.entries.forEach { p ->
                 FilterChip(
                     selected = kit.position == p,
-                    onClick = { viewModel.saveBrandKit(kit.copy(position = p)) },
+                    onClick = { onChange(kit.copy(position = p)) },
                     label = { Text(p.label) },
                 )
             }
         }
-        var size by remember(brandVersion) { mutableFloatStateOf(kit.logoSize) }
+        val size = kit.logoSize
         Text("Logo size: ${(size * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
         Slider(
-            value = size, onValueChange = { size = it }, valueRange = 0.1f..0.4f,
-            onValueChangeFinished = { viewModel.saveBrandKit(kit.copy(logoSize = size)) },
+            value = size, onValueChange = { onChange(kit.copy(logoSize = it)) }, valueRange = 0.1f..0.4f,
         )
-        var opacity by remember(brandVersion) { mutableFloatStateOf(kit.logoOpacity) }
+        val opacity = kit.logoOpacity
         Text("Logo opacity: ${(opacity * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
         Slider(
-            value = opacity, onValueChange = { opacity = it }, valueRange = 0.3f..1f,
-            onValueChangeFinished = { viewModel.saveBrandKit(kit.copy(logoOpacity = opacity)) },
+            value = opacity, onValueChange = { onChange(kit.copy(logoOpacity = it)) }, valueRange = 0.3f..1f,
         )
-        var name by remember(brandVersion) { mutableStateOf(kit.businessName) }
+        val name = kit.businessName
         OutlinedTextField(
-            value = name, onValueChange = { name = it }, singleLine = true,
+            value = name, onValueChange = { onChange(kit.copy(businessName = it)) }, singleLine = true,
             label = { Text("Business name / handle, e.g. Sweet Crumbs · @sweetcrumbs") },
             modifier = Modifier.fillMaxWidth(),
         )
-        if (name != kit.businessName) {
-            Button(onClick = { viewModel.saveBrandKit(kit.copy(businessName = name.trim())) }) { Text("Save name") }
-        }
-        var tagline by remember(brandVersion) { mutableStateOf(kit.tagline) }
-        var instagram by remember(brandVersion) { mutableStateOf(kit.instagram) }
-        var facebook by remember(brandVersion) { mutableStateOf(kit.facebook) }
-        var website by remember(brandVersion) { mutableStateOf(kit.website) }
+        val tagline = kit.tagline
+        val instagram = kit.instagram
+        val facebook = kit.facebook
+        val website = kit.website
         OutlinedTextField(
-            value = tagline, onValueChange = { tagline = it }, singleLine = true,
+            value = tagline, onValueChange = { onChange(kit.copy(tagline = it)) }, singleLine = true,
             label = { Text("Tagline (optional), e.g. Custom cakes to order") }, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
-            value = instagram, onValueChange = { instagram = it }, singleLine = true,
+            value = instagram, onValueChange = { onChange(kit.copy(instagram = it)) }, singleLine = true,
             label = { Text("Instagram (optional), e.g. sweetcrumbs") }, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
-            value = facebook, onValueChange = { facebook = it }, singleLine = true,
+            value = facebook, onValueChange = { onChange(kit.copy(facebook = it)) }, singleLine = true,
             label = { Text("Facebook (optional), e.g. Sweet Crumbs") }, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
-            value = website, onValueChange = { website = it }, singleLine = true,
+            value = website, onValueChange = { onChange(kit.copy(website = it)) }, singleLine = true,
             label = { Text("Website (optional), e.g. sweetcrumbs.com") }, modifier = Modifier.fillMaxWidth(),
         )
-        if (tagline != kit.tagline || instagram != kit.instagram || facebook != kit.facebook || website != kit.website) {
-            Button(onClick = {
-                viewModel.saveBrandKit(
-                    kit.copy(
-                        tagline = tagline.trim(), instagram = instagram.trim().removePrefix("@"),
-                        facebook = facebook.trim(), website = website.trim(),
-                    )
-                )
-            }) { Text("Save text") }
-        }
         Text("Text font", style = MaterialTheme.typography.labelMedium)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LabelFont.entries.forEach { f ->
                 val family = remember(f) { FontFamily(f.typeface()) }
                 FilterChip(
                     selected = kit.labelFont == f,
-                    onClick = { viewModel.saveBrandKit(kit.copy(labelFont = f)) },
+                    onClick = { onChange(kit.copy(labelFont = f)) },
                     label = { Text(f.label, fontFamily = family, fontSize = 16.sp) },
                 )
             }
@@ -624,7 +654,7 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
                 Box(
                     Modifier.size(36.dp).clip(CircleShape).background(Color(colour))
                         .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
-                        .clickable { viewModel.saveBrandKit(kit.copy(labelColor = colour)) },
+                        .clickable { onChange(kit.copy(labelColor = colour)) },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (selected) Text("✓", color = if (Color(colour).luminance() > 0.5f) Color.Black else Color.White)
@@ -636,7 +666,7 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
             LabelStyle.entries.forEach { st ->
                 FilterChip(
                     selected = kit.labelStyle == st,
-                    onClick = { viewModel.saveBrandKit(kit.copy(labelStyle = st)) },
+                    onClick = { onChange(kit.copy(labelStyle = st)) },
                     label = { Text(st.label) },
                 )
             }
@@ -646,7 +676,7 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
             ColorFilterPreset.entries.forEach { f ->
                 FilterChip(
                     selected = kit.filter == f,
-                    onClick = { viewModel.saveBrandKit(kit.copy(filter = f)) },
+                    onClick = { onChange(kit.copy(filter = f)) },
                     label = { Text(f.label) },
                 )
             }
@@ -673,7 +703,7 @@ private fun BrandKitSection(brandVersion: Int, sample: Uri?, viewModel: MainView
         )
         BrandBackgrounds()
         SwitchRow("Also brand crops, filters and white-background copies", kit.applyToEdits) {
-            viewModel.saveBrandKit(kit.copy(applyToEdits = it))
+            onChange(kit.copy(applyToEdits = it))
         }
     }
 }
