@@ -438,16 +438,16 @@ if scroll_to_text "Business name"; then
   tap_text "Business name" && type_text "Soni%sBakes"
   sleep 1
   hide_keyboard
-  tap_text "Save name" || true
   sleep 1
   shot 05i-brand-kit
   if scroll_to_text "Tagline"; then
     tap_text "Tagline" && type_text "Custom%scakes%sto%sorder"; sleep 1; hide_keyboard
     scroll_to_text "Instagram" && tap_text "Instagram" && type_text "sonibakes"; sleep 1; hide_keyboard
-    scroll_to_text "Save text" && tap_text "Save text"
-    sleep 1
   fi
   scroll_to_text "Text font" && { tap_exact "Script" || true; sleep 1; }
+  # Settings edits are a draft until the sticky bar's Save.
+  if tap_text "Save changes"; then echo "PASS: settings saved from the unsaved-changes bar"; else echo "FAIL: no Save changes bar after editing the brand kit"; fi
+  sleep 2
   shot 05i1-brand-fonts
   scroll_to_text "Preview" || true
   adb shell input swipe 540 1500 540 1000 300; sleep 3
