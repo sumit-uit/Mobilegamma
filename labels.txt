@@ -1,0 +1,21 @@
+MATCH photo cake_1.jpg   cake=0.94 faces=0  Cake 93%, Food 88%, Party 77%, Event 75%, Icing 74%, Fire 62%, Flesh 58%, Tableware 52%, Cuisine 52%, Chair 50%
+MATCH photo cake_2.jpg   cake=0.98 faces=0  Cake 97%, Food 96%, Icing 96%, Cuisine 90%, Event 77%, Party 68%, Flower 58%, Pasteles 53%, Tableware 45%, Cookware and bakeware 44%
+      photo cake_3.jpg   cake=0.43 faces=0  Food 92%, Cuisine 81%, Bread 67%, Metal 60%, Flower 54%, Tableware 54%, Fast food 53%, Meal 51%, Cutlery 48%, Hat 46%
+      photo cupcake_1.jpg cake=0.32 faces=0  Food 70%, Tableware 62%, Christmas 62%, Building 52%, Toy 47%, Event 47%, Flesh 41%, Hat 39%, Meal 35%, Pattern 34%
+      photo cupcake_2.jpg cake=0.48 faces=0  Food 85%, Cuisine 74%, Tableware 47%, Cake 47%, Fruit 45%, Bread 44%, Metal 42%, Wheel 42%, Vegetable 40%, Pattern 39%
+      photo cupcake_3.jpg cake=0.00 faces=1  Food 92%, Meal 79%, Cuisine 76%, Building 72%, Vacation 69%, Fast food 64%, Flower 63%, Lunch 59%, Event 56%, Vegetable 52%
+      photo other_1.jpg  cake=0.00 faces=0  Food 55%, Metal 48%, Tableware 41%, Flower 38%, Sand 37%, Plant 37%, Tire 33%, Wheel 33%
+      photo other_2.jpg  cake=0.00 faces=0  Beach 90%, Boat 83%, Vehicle 80%, Sand 73%, Sky 71%, Soil 68%, Road 52%, River 39%, Vacation 36%, Plant 31%
+      photo other_3.jpg  cake=0.00 faces=0  Sky 95%, Beach 94%, Sand 79%, Sunset 67%, Lake 64%, Rock 62%, Soil 57%, Mountain 55%, Field 50%, Asphalt 43%
+      photo people_1.jpg cake=0.00 faces=16  Room 71%, Poster 69%, Monochrome 57%, Crew 40%, Team 40%, Dog 30%
+      photo people_2.jpg cake=0.41 faces=4  Fun 83%, Event 72%, Hat 65%, Vacation 62%, Party 62%, Leisure 55%, Toy 51%, Flesh 48%, Smile 46%, Food 45%
+      photo people_3.jpg cake=0.00 faces=3  Musical instrument 90%, Event 60%, Building 52%, Chair 48%, Sitting 43%, Musician 40%, Jeans 34%, Fun 34%, Metal 33%, Jacket 30%
+MATCH photo topper_1.jpg cake=0.97 faces=0  Cake 96%, Food 93%, Icing 90%, Cookware and bakeware 80%, Cuisine 78%, Toy 78%, Event 60%, Party 46%, Pasteles 42%, Fruit 38%
+      photo topper_2.jpg cake=0.00 faces=0  Necklace 76%, Shoe 59%, Pattern 57%, Jewellery 56%, Flesh 50%, Dog 48%, Paper 46%, Hat 40%, Foot 39%, Toy 37%
+      photo topper_3.jpg cake=0.00 faces=0  Metal 77%, Wheel 65%, Tire 52%, Jacket 50%, Jewellery 43%, Hat 41%, Jeans 33%, Goggles 30%, Toy 30%
+MATCH photo zz_burst_blurry.jpg cake=0.87 faces=0  Cake 87%, Icing 84%, Food 82%, Cuisine 54%, Flesh 48%, Event 47%, Jacket 46%, Pattern 43%, Christmas 36%, Party 32%
+MATCH photo zz_burst_sharp.jpg cake=0.97 faces=0  Cake 97%, Food 96%, Icing 96%, Cuisine 90%, Event 77%, Party 66%, Flower 58%, Pasteles 53%, Tableware 45%, Plant 45%
+MATCH photo zz_cake_face_topper.jpg cake=0.89 faces=1 (skipped: people)  Cake 89%, Food 85%, Icing 76%, Beard 75%, Cuisine 65%, Moustache 53%, Event 49%, Toy 47%, Hat 43%, Tableware 41%
+MATCH video zz_cake_video.mp4 cake=0.98 faces=0  Cake 97%, Food 97%, Icing 96%, Cuisine 90%, Event 78%, Party 70%, Flower 56%, Pasteles 53%, Cookware and bakeware 47%, Plant 42%
+MATCH photo zz_cake_with_person.jpg cake=0.91 faces=1 (skipped: people)  Food 92%, Cake 90%, Icing 84%, Cuisine 80%, Beard 74%, Event 51%, Moustache 47%, Jacket 46%, Flesh 45%, Eyelash 40%
+      video zz_other_video.mp4 cake=0.00 faces=0  Food 81%, Cuisine 60%, Tableware 52%, Flower 51%, Metal 45%, Plant 42%, Fruit 35%, Vegetable 31%

@@ -1,0 +1,5 @@
+PASS zz_cake_with_person.jpg: faces=1 (want people)
+PASS best shot: blurry burst photo set aside, sharp one kept
+PASS zz_cake_video.mp4: match=True
+PASS zz_other_video.mp4: match=False
+KNOWN LIMITATION zz_cake_face_topper.jpg: faces=1 (want no people)
